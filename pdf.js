@@ -170,7 +170,7 @@ export async function buildPdf(data, h) {
     ensure(70);
     h2('Overnight sleep');
     const sm = h.sleepSummary(nights);
-    write(`Average ${h.fmtDur(sm.avg)} over ${sm.n} night${sm.n > 1 ? 's' : ''}. Usually asleep around ${h.fmtTime(sm.bed)} and awake around ${h.fmtTime(sm.wake)}. Woke during the night on ${sm.woke} of ${sm.n} nights.`, ML, CW, 'sans', 'normal', 9.5, C.deep, 1.45);
+    write(`Average ${h.fmtDur(sm.avg)} over ${sm.n} night${sm.n > 1 ? 's' : ''}. Usually asleep around ${h.fmtTime(sm.bed)} and awake around ${h.fmtTime(sm.wake)}. Woke during the night on ${sm.woke} of ${sm.n} nights${sm.awake ? `, about ${Math.round(sm.awake / Math.max(1, sm.woke))} min awake on those nights` : ''}. Time asleep excludes time awake in the night.`, ML, CW, 'sans', 'normal', 9.5, C.deep, 1.45);
     if (data.guide) write(`Guideline: ${data.guide.text} (Australia's 24-Hour Movement Guidelines).`, ML, CW, 'serif', 'italic', 9, C.muted, 1.45);
     y += 3;
     const shown = nights.slice(-31);
@@ -212,7 +212,7 @@ export async function buildPdf(data, h) {
       font('sans', 'bold', 9, data.guide && n.mins < data.guide.lo ? C.alert : C.deep);
       doc.text(h.fmtDur(n.mins), cols[3], y, { baseline: 'top' });
       font('sans', 'normal', 9, C.deep);
-      doc.text(n.wakings ? String(n.wakings) : '-', cols[4], y, { baseline: 'top' });
+      doc.text(n.wakings ? `${n.wakings}${n.awake ? ` (${Math.round(n.awake)} min)` : ''}` : '-', cols[4], y, { baseline: 'top' });
       y += 5.4;
     }
     y += 8;
@@ -303,6 +303,7 @@ export async function buildPdf(data, h) {
     font('sans', 'bold', 10.5, C.deep); parts.push({ L: lines(hl.text, w), fam: 'sans', style: 'bold', size: 10.5, color: C.deep, step: lh(10.5, 1.35), gap: 0.6 });
     font('sans', 'normal', 8.5, C.muted); parts.push({ L: lines(metaBits.join('  ·  '), w), fam: 'sans', style: 'normal', size: 8.5, color: C.muted, step: lh(8.5, 1.45), gap: 0.8 });
     if (hl.from === 'sleep' && clean(e.title)) extra.unshift(e.title);
+    if (e.cat === 'sleep' && e.sleep === 'waking' && e.awake) extra.push(`Awake ${e.awake} min`);
     if (extra.length) { font('sans', 'normal', 9, C.deep); parts.push({ L: lines(extra.join('     '), w), fam: 'sans', style: 'normal', size: 9, color: C.deep, step: lh(9, 1.45), gap: 0.6 }); }
     if (Array.isArray(e.results) && e.results.length) {
       font('sans', 'normal', 9, C.deep);

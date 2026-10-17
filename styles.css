@@ -467,3 +467,6 @@ a.btn { text-decoration: none; }
 .sleep-bar { fill: var(--lavender); }
 .sleep-bar.sel { fill: var(--deep); }
 .sleep-avg { stroke: var(--terracotta); stroke-width: 1.5; }
+
+.quick-wake { margin-bottom: 6px; }
+.quick-hint { margin: 0 0 14px; }

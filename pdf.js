@@ -283,7 +283,7 @@ export async function buildPdf(data, h) {
   // ---------- entries ----------
   h2(`Entries (${data.entries.length})`);
   const flaggedLab = (e) => Array.isArray(e.results) && e.results.some((r) => /low|high/.test(h.labFlag(r)));
-  const sevColor = (e) => (e.cat === 'win' ? C.terra : e.cat === 'sleep' && !e.sev ? C.lav : e.cat === 'bloodtest' ? (flaggedLab(e) ? C.alert : C.sage) : e.cat === 'supplement' ? C.sky : e.sev === 3 ? C.alert : e.sev === 2 ? C.gold : C.sage);
+  const sevColor = (e) => (e.cat === 'win' ? C.terra : e.cat === 'sleep' && !e.sev ? C.lav : !e.sev && !h.noConcern({ cat: e.cat, sev: 1 }) ? [232, 197, 168] : e.cat === 'bloodtest' ? (flaggedLab(e) ? C.alert : C.sage) : e.cat === 'supplement' ? C.sky : e.sev === 3 ? C.alert : e.sev === 2 ? C.gold : C.sage);
   const block = (e, showDate, showArea) => {
     const x0 = ML + 4.5; const w = CW - 4.5;
     const cat = h.CAT[e.cat] || h.CAT.other;

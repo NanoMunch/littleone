@@ -243,7 +243,8 @@ input[type="date"].input::-webkit-date-and-time-value, input[type="time"].input:
 .entry-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--sage); }
 .entry-card[data-sev="2"]::before { background: var(--gold); }
 .entry-card[data-sev="3"]::before { background: var(--alert); }
-.entry-card[data-sev="0"]::before { background: var(--lavender); }
+.entry-card[data-sev="0"]::before { background: var(--blush); }
+.entry-card[data-cat="sleep"][data-sev="0"]::before { background: var(--lavender); }
 .entry-card[data-cat="win"]::before { background: var(--terracotta); }
 .entry-card[data-cat="supplement"]::before { background: var(--sky); }
 .entry-card[data-cat="bloodtest"]::before { background: var(--sage); }

@@ -1,7 +1,7 @@
 import { getAllEntries, putEntries, kvGet, kvSet, kvDel } from './db.js';
 import * as Sync from './sync.js';
 
-export const APP_VERSION = '1.2.1';
+export const APP_VERSION = '1.2.2';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -469,7 +469,7 @@ function syncFormBits(el) {
   const st = el._st;
   const wrap = $('[data-sevwrap]', el); wrap.hidden = NO_CONCERN.has(st.cat);
   const sk = sleepKindOn(st);
-  $('[data-sevlabel]', el).textContent = sk ? 'Concern level (optional)' : 'Concern level';
+  $('[data-sevlabel]', el).textContent = 'Concern level (optional)';
   $('[data-f="title"]', el).placeholder = sk ? ({ bed: 'e.g. Settled quickly after a story', wake: 'e.g. Woke up happy', waking: 'e.g. Needed a drink of water' }[st.sleepKind]) : (CAT[st.cat] || CAT.other).ph;
   $('[data-titlelabel]', el).textContent = ITEM_LABEL[st.cat] || sk ? 'Description (optional)' : 'What happened?';
 }
@@ -519,7 +519,7 @@ function mountForm(el, entry, mode) {
       $$('[data-src]', el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
       saveDraft(el);
     } else if (b.dataset.sev) {
-      st.sev = sleepKindOn(st) && st.sev === +b.dataset.sev ? 0 : +b.dataset.sev;
+      st.sev = st.sev === +b.dataset.sev ? 0 : +b.dataset.sev; // tap the chosen level again to clear it
       $$('.sev-btn', el).forEach((x) => x.setAttribute('aria-pressed', String(+x.dataset.sev === st.sev)));
       saveDraft(el);
     } else if (b.dataset.act === 'save-entry') {
@@ -623,7 +623,6 @@ async function saveForm(el) {
   const sk = sleepKindOn(st);
   if (sk && !hasDetail('time')) { toast(st.sleepKind === 'bed' ? 'Add the time they went to sleep' : 'Add the time they woke up'); const tf = $('[data-x="time"]', el); if (tf) tf.focus(); return; }
   if (!title && !notes && !hasDetail('med') && !hasDetail('temp') && !results.length && !sk) { toast('Add a short description or a note'); $('[data-f="title"]', el).focus(); return; }
-  if (!NO_CONCERN.has(st.cat) && !st.sev && !sk) { toast('Choose a concern level'); return; }
   if (!date) { toast('Choose a date'); return; }
   if (date > today()) { toast("The date can't be in the future"); return; }
   const now = Date.now();
@@ -631,7 +630,7 @@ async function saveForm(el) {
   const e = prev && !prev.deleted ? { ...prev } : { id: Sync.randomId(12), createdAt: now, by: S.myName || '', byDev: S.deviceId };
   Object.assign(e, {
     date, tod, cat: st.cat, src: st.src, srcName: st.src === 'parent' ? st.srcName : '',
-    title: title.slice(0, 160), notes: notes.slice(0, 8000), sev: NO_CONCERN.has(st.cat) ? 1 : st.sev, updatedAt: now,
+    title: title.slice(0, 160), notes: notes.slice(0, 8000), sev: NO_CONCERN.has(st.cat) ? 1 : st.sev || 0, updatedAt: now,
   });
   const keep = EXTRA_FIELDS[st.cat] || [];
   if (sk && st.sleepKind === 'waking') keep.push('awake');
@@ -1113,7 +1112,7 @@ function renderExport() {
     <div class="group">
       <div class="group-head"><span class="label">Concern level</span></div>
       <div class="check-list">${[1, 2, 3].map((n) => check('sevs', String(n), SEV[n], '', vc[n], x.sevs.has(n))).join('')}</div>
-      <p class="hint">Wins, supplements and blood tests don't have a concern level, so they're included whenever their area is ticked.</p>
+      <p class="hint">Entries without a concern level (including wins, supplements and blood tests) are included whenever their area is ticked.</p>
     </div>
     <div class="group">
       <div class="group-head"><span class="label">Include</span></div>

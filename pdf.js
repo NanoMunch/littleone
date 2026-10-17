@@ -304,6 +304,7 @@ export async function buildPdf(data, h) {
     font('sans', 'normal', 8.5, C.muted); parts.push({ L: lines(metaBits.join('  ·  '), w), fam: 'sans', style: 'normal', size: 8.5, color: C.muted, step: lh(8.5, 1.45), gap: 0.8 });
     if (hl.from === 'sleep' && clean(e.title)) extra.unshift(e.title);
     if (e.cat === 'sleep' && e.sleep === 'waking' && e.awake) extra.push(`Awake ${e.awake} min`);
+    if (h.contentsText(e)) extra.push(`Contains: ${h.contentsText(e)}`);
     if (extra.length) { font('sans', 'normal', 9, C.deep); parts.push({ L: lines(extra.join('     '), w), fam: 'sans', style: 'normal', size: 9, color: C.deep, step: lh(9, 1.45), gap: 0.6 }); }
     if (Array.isArray(e.results) && e.results.length) {
       font('sans', 'normal', 9, C.deep);

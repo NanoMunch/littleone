@@ -471,3 +471,11 @@ a.btn { text-decoration: none; }
 
 .quick-wake { margin-bottom: 6px; }
 .quick-hint { margin: 0 0 14px; }
+
+/* product contents (e.g. a multivitamin gummy) */
+.contents { margin: 2px 0 12px; }
+.content-head, .content-row { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr) 40px; gap: 6px; }
+.content-head { font-size: .76rem; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+.content-row { align-items: center; margin-bottom: 6px; }
+.content-row .icon-btn { color: var(--muted); }
+.content-hint { margin: 2px 0 10px; }

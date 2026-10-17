@@ -1,7 +1,7 @@
 import { getAllEntries, putEntries, kvGet, kvSet, kvDel } from './db.js';
 import * as Sync from './sync.js';
 
-export const APP_VERSION = '1.2.2';
+export const APP_VERSION = '1.3.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -169,9 +169,11 @@ function lastRangeFor(name) {
   const r = s.points.slice().reverse().find((p) => p.low || p.high) || {};
   return { unit: s.unit, low: r.low || '', high: r.high || '' };
 }
+export const contentsText = (e) => (Array.isArray(e.contents) ? e.contents.map((c) => [c.name, c.amount].filter((v) => String(v || '').trim()).join(' ')).filter(Boolean).join(', ') : '');
 const flagHTML = (f) => (f ? `<span class="flag ${f}">${f === 'low' ? '↓ ' : f === 'high' ? '↑ ' : ''}${FLAG_LABEL[f]}</span>` : '');
 function ironCounts(all, prevDate, date) {
-  const iron = all.filter((e) => (e.cat === 'supplement' || e.cat === 'medication') && /iron|ferr/i.test(e.med || ''));
+  const iron = all.filter((e) => (e.cat === 'supplement' || e.cat === 'medication')
+    && (/iron|ferr/i.test(e.med || '') || (Array.isArray(e.contents) && e.contents.some((c) => /iron|ferr/i.test(c.name || '')))));
   return { between: prevDate ? iron.filter((e) => e.date > prevDate && e.date <= date).length : 0, since: iron.filter((e) => e.date > date).length };
 }
 
@@ -383,8 +385,8 @@ function renderExtra(el) {
   const inp = (f, label, attrs = '') => `<div class="field"><label class="label" for="${uid}-x-${f}">${label}</label><input class="input" id="${uid}-x-${f}" data-x="${f}" value="${esc(x[f] || '')}" autocomplete="off" ${attrs}></div>`;
   let html = '';
   if (st.cat === 'health') html = `<div class="row2">${inp('temp', 'Temperature (°C)', 'inputmode="decimal" placeholder="e.g. 38.2"')}${inp('time', 'Time (optional)', 'type="time"')}</div>`;
-  else if (st.cat === 'medication') html = `${savedHTML(st)}${inp('med', 'Medicine', 'placeholder="e.g. Paracetamol"')}<div class="row2">${inp('dose', 'Dose', 'placeholder="e.g. 7.5 mL"')}${inp('time', 'Time given', 'type="time"')}</div>`;
-  else if (st.cat === 'supplement') html = `${savedHTML(st)}${inp('med', 'Supplement', 'placeholder="e.g. Vitamin D"')}<div class="row2">${inp('dose', 'Amount', 'placeholder="e.g. 1 drop, 5 mL"')}${inp('time', 'Time given', 'type="time"')}</div>`;
+  else if (st.cat === 'medication') html = `${savedHTML(st)}${inp('med', 'Medicine', 'placeholder="e.g. Paracetamol"')}<div class="row2">${inp('dose', 'Dose', 'placeholder="e.g. 7.5 mL"')}${inp('time', 'Time given', 'type="time"')}</div>${contentsHTML(st, uid)}`;
+  else if (st.cat === 'supplement') html = `${savedHTML(st)}${inp('med', 'Supplement', 'placeholder="e.g. Kids multivitamin gummy"')}<div class="row2">${inp('dose', 'Amount given', 'placeholder="e.g. 2 gummies"')}${inp('time', 'Time given', 'type="time"')}</div>${contentsHTML(st, uid)}`;
   else if (st.cat === 'appointment') html = inp('time', 'Appointment time (optional)', 'type="time"');
   else if (st.cat === 'bloodtest') html = labFormHTML(st, uid);
   else if (st.cat === 'sleep') {
@@ -400,6 +402,22 @@ function renderExtra(el) {
   }
   box.innerHTML = html; box.hidden = !html;
 }
+// Ingredients in a product (e.g. a multivitamin gummy with vitamin D and iron), each with its strength from the label.
+function contentsHTML(st, uid) {
+  const what = ITEM_LABEL[st.cat].toLowerCase();
+  const rows = st.contents.map((c, i) => `
+    <div class="content-row">
+      <input class="input" id="${uid}-c${i}-name" data-c="${i}" data-cf="name" value="${esc(c.name)}" placeholder="e.g. Vitamin D" aria-label="Ingredient" autocomplete="off" maxlength="40">
+      <input class="input" id="${uid}-c${i}-amount" data-c="${i}" data-cf="amount" value="${esc(c.amount)}" placeholder="e.g. 10 µg" aria-label="Strength" autocomplete="off" maxlength="20">
+      <button type="button" class="icon-btn" data-cdel="${i}" aria-label="Remove ${esc(c.name || 'this ingredient')}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>`).join('');
+  return `<div class="contents">
+    <span class="label">What's in it (optional)</span>
+    ${rows ? `<div class="content-head" aria-hidden="true"><span>Ingredient</span><span>Strength</span><span></span></div>${rows}<p class="hint content-hint">Strength as printed on the label, per gummy, drop or dose.</p>` : `<p class="hint content-hint">For products with more than one ingredient, like a multivitamin gummy. It's saved with the ${what}, so next time it fills in for you.</p>`}
+    <button type="button" class="chip" data-act="add-content"><span aria-hidden="true">+</span> Add ${st.contents.length ? 'another' : 'an'} ingredient</button>
+  </div>`;
+}
+
 // Medicines and supplements already logged, most recent first, so they can be added again in one tap.
 function itemKey(cat, med, dose) { return `${cat}|${String(med || '').trim().toLowerCase()}|${String(dose || '').trim().toLowerCase()}`; }
 function savedItems(cat) {
@@ -409,7 +427,7 @@ function savedItems(cat) {
     const key = itemKey(cat, e.med, e.dose);
     const at = Math.max(e.createdAt || 0, parseYmd(e.date).getTime());
     const cur = map.get(key);
-    if (!cur || at > cur.at) map.set(key, { key, med: e.med.trim(), dose: String(e.dose || '').trim(), title: e.title, at, count: (cur ? cur.count : 0) + 1 });
+    if (!cur || at > cur.at) map.set(key, { key, med: e.med.trim(), dose: String(e.dose || '').trim(), title: e.title, contents: Array.isArray(e.contents) ? e.contents : [], at, count: (cur ? cur.count : 0) + 1 });
     else cur.count++;
   }
   return Array.from(map.values())
@@ -430,6 +448,7 @@ function savedHTML(st) {
 function useSavedItem(el, item) {
   const st = el._st;
   st.extra.med = item.med; st.extra.dose = item.dose;
+  st.contents = (item.contents || []).map((c) => ({ name: c.name || '', amount: c.amount || '' }));
   const now = new Date();
   if (!st.extra.time && st.mode === 'new') st.extra.time = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   const t = $('[data-f="title"]', el);
@@ -492,6 +511,7 @@ function mountForm(el, entry, mode) {
     sev: e.sev || 0,
     extra: { temp: e.temp || '', med: e.med || '', dose: e.dose || '', time: e.time || '', awake: e.awake || '' },
     results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name || '', value: r.value || '', unit: r.unit || '', low: r.low || '', high: r.high || '' })) : [],
+    contents: Array.isArray(e.contents) ? e.contents.map((c) => ({ name: c.name || '', amount: c.amount || '' })) : [],
     srcTouched: mode === 'edit', srcAuto: false,
     sleepKind: e.sleep || '', kindTouched: mode === 'edit' || !!e.kindTouched,
   };
@@ -536,6 +556,11 @@ function mountForm(el, entry, mode) {
       st.results.push({ name, value: '', unit: (prev && prev.unit) || (preset && preset.unit) || '', low: prev ? prev.low : '', high: prev ? prev.high : '' });
       renderExtra(el); saveDraft(el);
       const f = $(`[data-r="${st.results.length - 1}"][data-rf="${name ? 'value' : 'name'}"]`, el); if (f) f.focus();
+    } else if (b.dataset.act === 'add-content') {
+      st.contents.push({ name: '', amount: '' }); renderExtra(el); saveDraft(el);
+      const f = $(`[data-c="${st.contents.length - 1}"][data-cf="name"]`, el); if (f) f.focus();
+    } else if (b.dataset.cdel !== undefined) {
+      st.contents.splice(+b.dataset.cdel, 1); renderExtra(el); saveDraft(el);
     } else if (b.dataset.rdel !== undefined) {
       st.results.splice(+b.dataset.rdel, 1); renderExtra(el); saveDraft(el);
     } else if (b.dataset.act === 'saved-edit') {
@@ -553,6 +578,7 @@ function mountForm(el, entry, mode) {
   el.oninput = (ev) => {
     const t = ev.target;
     const f = t.dataset.x; if (f) st.extra[f] = t.value;
+    if (t.dataset.cf && t.dataset.c !== undefined) { const c = st.contents[+t.dataset.c]; if (c) c[t.dataset.cf] = t.value; }
     if (t.dataset.rf && t.dataset.r !== undefined) {
       const r = st.results[+t.dataset.r];
       if (r) { r[t.dataset.rf] = t.value; const fl = $(`[data-flag="${t.dataset.r}"]`, el); if (fl) fl.innerHTML = flagHTML(labFlag(r)); }
@@ -589,7 +615,7 @@ function saveDraft(el) {
     const d = {
       date: $('[data-f="date"]', el).value, tod: $('[data-f="tod"]', el).value,
       title: $('[data-f="title"]', el).value, notes: $('[data-f="notes"]', el).value,
-      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, sleep: st.sleepKind, kindTouched: st.kindTouched, savedAt: Date.now(),
+      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, contents: st.contents, sleep: st.sleepKind, kindTouched: st.kindTouched, savedAt: Date.now(),
     };
     if (d.title || d.notes || d.cat) kvSet('draft', d).catch(() => {}); else kvDel('draft').catch(() => {});
   }, 400);
@@ -639,6 +665,8 @@ async function saveForm(el) {
     if (keep.includes(f) && v) e[f] = v.slice(0, 60); else delete e[f];
   }
   if (results.length) e.results = results; else delete e.results;
+  const contents = ITEM_LABEL[st.cat] ? st.contents.map((c) => ({ name: String(c.name || '').trim().slice(0, 40), amount: String(c.amount || '').trim().slice(0, 20) })).filter((c) => c.name) : [];
+  if (contents.length) e.contents = contents; else delete e.contents;
   if (sk) e.sleep = st.sleepKind; else delete e.sleep;
   if (prev) e.editedBy = S.myName || '';
   S.entries.set(e.id, e);
@@ -688,6 +716,7 @@ function repeatEntry(e) {
     med: e.med || '', dose: e.dose || '', temp: '', time: hasTime ? `${pad(now.getHours())}:${pad(now.getMinutes())}` : '',
     results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name, unit: r.unit || '', low: r.low || '', high: r.high || '', value: '' })) : [],
     sleep: e.sleep || '', kindTouched: !!e.sleep,
+    contents: Array.isArray(e.contents) ? e.contents.map((c) => ({ name: c.name, amount: c.amount || '' })) : [],
   };
   closeSheet(); switchTab('log');
   const el = $('#log-form'); mountForm(el, draft, 'new'); saveDraft(el);
@@ -724,6 +753,7 @@ function entryCardHTML(e, nightByWake) {
   if (hl.from === 'sleep' && String(e.title || '').trim()) extra.push(esc(e.title));
   if (e.temp && hl.from !== 'temp') extra.push(`Temperature ${esc(fmtTemp(e.temp))}`);
   if ((e.med || e.dose) && hl.from !== 'med') extra.push(`${esc(e.med || ITEM_LABEL[e.cat] || 'Medicine')}${e.dose ? ', ' + esc(e.dose) : ''}`);
+  if (contentsText(e)) extra.push(`Contains ${esc(contentsText(e))}`);
   const flagged = Array.isArray(e.results) && e.results.some((r) => /low|high/.test(labFlag(r)));
   const night = nightByWake && e.sleep === 'wake' ? nightByWake.get(e.id) : null;
   if (night) extra.push(`Slept ${fmtDur(night.mins)} from ${fmtTime(night.bed)}${night.wakings ? `, ${wokeText(night)}` : ''}`);
@@ -752,7 +782,7 @@ function renderHistory() {
 
   const q = S.hist.q.trim().toLowerCase();
   const list = all.filter((e) => (S.hist.cat === 'all' || e.cat === S.hist.cat)
-    && (!q || [e.title, e.notes, e.med, e.dose, srcLabel(e), e.by, (CAT[e.cat] || {}).label, ...(Array.isArray(e.results) ? e.results.map((r) => r.name) : [])].join(' ').toLowerCase().includes(q)));
+    && (!q || [e.title, e.notes, e.med, e.dose, srcLabel(e), e.by, (CAT[e.cat] || {}).label, ...(Array.isArray(e.results) ? e.results.map((r) => r.name) : []), contentsText(e)].join(' ').toLowerCase().includes(q)));
   const box = $('#entry-list');
   if (!list.length) {
     box.innerHTML = `<div class="empty"><div class="big" aria-hidden="true">📋</div><p>${all.length ? 'Nothing matches that search or filter.' : 'No entries yet. Add the first one from the Log tab.'}</p></div>`;
@@ -1194,7 +1224,7 @@ async function makePdf(btn) {
   try {
     const { buildPdf } = await import('./pdf.js');
     const data = reportData(); data.badge = concernBadge(data.stats);
-    const { blob, pages } = await buildPdf(data, { CAT, SEV, SRC, srcKey, srcLabel, fmtDayLong, fmtDayShort, fmtTime, fmtTemp, noConcern, ITEM_LABEL, headline, labSeries, labFlag, labRange, labNum, labDomain, FLAG_LABEL, sleepNights, sleepSummary, fmtDur, wokeText });
+    const { blob, pages } = await buildPdf(data, { CAT, SEV, SRC, srcKey, srcLabel, fmtDayLong, fmtDayShort, fmtTime, fmtTemp, noConcern, ITEM_LABEL, headline, labSeries, labFlag, labRange, labNum, labDomain, FLAG_LABEL, sleepNights, sleepSummary, fmtDur, wokeText, contentsText });
     S.lastPdf = { blob, pages, name: `little-one-report-${today()}.pdf` };
     renderPdfReady();
     $('#pdf-ready').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1230,6 +1260,7 @@ function reportText() {
     if (hl.from === 'sleep' && String(e.title || '').trim()) L.push(`  ${e.title}`);
     if (e.temp && hl.from !== 'temp') L.push(`  Temperature: ${fmtTemp(e.temp)}`);
     if ((e.med || e.dose) && hl.from !== 'med') L.push(`  ${ITEM_LABEL[e.cat] || 'Medicine'}: ${[e.med, e.dose].filter(Boolean).join(', ')}`);
+    if (contentsText(e)) L.push(`  Contains: ${contentsText(e)}`);
     (Array.isArray(e.results) ? e.results : []).forEach((r) => { const f = labFlag(r); L.push(`  ${r.name}: ${r.value} ${r.unit || ''}${labRange(r) ? ` (normal ${labRange(r)})` : ''}${f === 'low' || f === 'high' ? ` ${FLAG_LABEL[f].toUpperCase()}` : ''}`); });
     if (d.opts.notes && e.notes && hl.from !== 'notes-all') L.push(`  Notes: ${e.notes.replace(/\n/g, '\n  ')}`);
     L.push('');

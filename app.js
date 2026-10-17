@@ -1,7 +1,7 @@
 import { getAllEntries, putEntries, kvGet, kvSet, kvDel } from './db.js';
 import * as Sync from './sync.js';
 
-export const APP_VERSION = '1.0.1';
+export const APP_VERSION = '1.1.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -12,6 +12,7 @@ export const CATS = [
   { k: 'health', label: 'Health', em: '🤒', ph: 'e.g. Runny nose and a cough' },
   { k: 'medication', label: 'Medicine', em: '💊', ph: 'e.g. For a fever' },
   { k: 'supplement', label: 'Supplement', em: '🫙', ph: 'e.g. With breakfast' },
+  { k: 'bloodtest', label: 'Blood test', em: '🧪', ph: 'e.g. Iron studies ordered by the GP' },
   { k: 'appointment', label: 'Appointment', em: '🩺', ph: 'e.g. GP check-up' },
   { k: 'social', label: 'Social', em: '🤝', ph: 'e.g. Played well with a new friend' },
   { k: 'development', label: 'Development', em: '🌱', ph: 'e.g. Wrote their name for the first time' },
@@ -33,11 +34,77 @@ export const TODS = [
 ];
 const TOD_RANK = { Overnight: 0, Morning: 1, Midday: 2, Afternoon: 3, Evening: 4, Night: 5 };
 export const SEV = { 1: 'Mild', 2: 'Moderate', 3: 'High' };
-const EXTRA_FIELDS = { health: ['temp', 'time'], medication: ['med', 'dose', 'time'], supplement: ['med', 'dose', 'time'], appointment: ['time'] };
+const EXTRA_FIELDS = { health: ['temp', 'time'], medication: ['med', 'dose', 'time'], supplement: ['med', 'dose', 'time'], appointment: ['time'], bloodtest: [] };
 // Areas where a concern level doesn't apply (shown without one, and left out of concern counts).
-export const NO_CONCERN = new Set(['win', 'supplement']);
+export const NO_CONCERN = new Set(['win', 'supplement', 'bloodtest']);
 export const noConcern = (e) => NO_CONCERN.has(e.cat);
 export const ITEM_LABEL = { medication: 'Medicine', supplement: 'Supplement' };
+
+// ---------------------------------------------------------------- blood tests
+// Each blood test entry holds a list of results: { name, value, unit, low, high }.
+// Normal ranges come from the report itself (they differ between labs and ages), never from the app.
+export const LAB_PRESETS = [
+  { name: 'Ferritin', unit: 'µg/L' }, { name: 'Haemoglobin', unit: 'g/L' }, { name: 'Iron', unit: 'µmol/L' },
+  { name: 'Transferrin saturation', unit: '%' }, { name: 'Vitamin D', unit: 'nmol/L' }, { name: 'Vitamin B12', unit: 'pmol/L' },
+  { name: 'Folate', unit: 'nmol/L' }, { name: 'CRP', unit: 'mg/L' },
+];
+export const FLAG_LABEL = { low: 'Low', high: 'High', ok: 'In range' };
+export function labNum(v) { const m = String(v ?? '').replace(',', '.').match(/-?\d+(\.\d+)?/); return m ? parseFloat(m[0]) : NaN; }
+export function labFlag(r) {
+  const v = labNum(r.value); const lo = labNum(r.low); const hi = labNum(r.high);
+  if (!isFinite(v)) return '';
+  if (isFinite(lo) && v < lo) return 'low';
+  if (isFinite(hi) && v > hi) return 'high';
+  return isFinite(lo) || isFinite(hi) ? 'ok' : '';
+}
+export function labRange(r) {
+  const lo = String(r.low || '').trim(); const hi = String(r.high || '').trim();
+  if (lo && hi) return `${lo}–${hi}`; if (lo) return `${lo} or more`; if (hi) return `up to ${hi}`; return '';
+}
+const labKey = (n) => String(n || '').trim().toLowerCase();
+export function labSeries(list) {
+  const map = new Map();
+  for (const e of list) {
+    if (e.cat !== 'bloodtest' || !Array.isArray(e.results)) continue;
+    for (const r of e.results) {
+      const name = String((r && r.name) || '').trim(); const value = String((r && r.value) || '').trim();
+      if (!name || !value) continue;
+      const k = labKey(name);
+      if (!map.has(k)) map.set(k, { name, unit: '', points: [] });
+      map.get(k).points.push({ date: e.date, value, num: labNum(value), unit: String(r.unit || '').trim(), low: String(r.low || '').trim(), high: String(r.high || '').trim(), flag: labFlag(r), created: e.createdAt || 0 });
+    }
+  }
+  const out = Array.from(map.values());
+  out.forEach((s) => {
+    s.points.sort((a, b) => (a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.created - b.created));
+    s.latest = s.points[s.points.length - 1];
+    s.unit = s.latest.unit || (s.points.find((p) => p.unit) || {}).unit || '';
+  });
+  return out.sort((a, b) => (a.latest.date !== b.latest.date ? (a.latest.date < b.latest.date ? 1 : -1) : a.name.localeCompare(b.name)));
+}
+// Chart scale: fit the results, and include a normal-range edge only when it's near them,
+// so a wide range (e.g. ferritin 20–200) doesn't flatten the trend.
+export function labDomain(nums, lo, hi) {
+  const dmin = Math.min(...nums); const dmax = Math.max(...nums);
+  const span = Math.max(dmax - dmin, Math.abs(dmax) * 0.2, 1);
+  const near = (b) => isFinite(b) && b >= dmin - 1.5 * span && b <= dmax + 1.5 * span;
+  const showLo = near(lo); const showHi = near(hi);
+  const vals = nums.concat(showLo ? [lo] : [], showHi ? [hi] : []);
+  let vmin = Math.min(...vals); let vmax = Math.max(...vals);
+  if (vmin === vmax) { vmin -= 1; vmax += 1; }
+  const pad = (vmax - vmin) * 0.16; vmax += pad; vmin = vmin >= 0 ? Math.max(0, vmin - pad) : vmin - pad;
+  return { vmin, vmax, showLo, showHi };
+}
+function lastRangeFor(name) {
+  const s = labSeries(live()).find((x) => labKey(x.name) === labKey(name)); if (!s) return null;
+  const r = s.points.slice().reverse().find((p) => p.low || p.high) || {};
+  return { unit: s.unit, low: r.low || '', high: r.high || '' };
+}
+const flagHTML = (f) => (f ? `<span class="flag ${f}">${f === 'low' ? '↓ ' : f === 'high' ? '↑ ' : ''}${FLAG_LABEL[f]}</span>` : '');
+function ironCounts(all, prevDate, date) {
+  const iron = all.filter((e) => (e.cat === 'supplement' || e.cat === 'medication') && /iron|ferr/i.test(e.med || ''));
+  return { between: prevDate ? iron.filter((e) => e.date > prevDate && e.date <= date).length : 0, since: iron.filter((e) => e.date > date).length };
+}
 
 // ---------------------------------------------------------------- helpers
 const $ = (s, r = document) => r.querySelector(s);
@@ -94,6 +161,8 @@ export function srcLabel(e) {
 export function headline(e, allowNotes = true) {
   const t = String(e.title || '').trim();
   if (t) return { text: t, from: 'title' };
+  const res = Array.isArray(e.results) ? e.results.filter((r) => r && String(r.name || '').trim()).map((r) => String(r.name).trim()) : [];
+  if (res.length) return { text: res.length > 3 ? `${res.slice(0, 3).join(', ')} and ${res.length - 3} more` : res.length > 1 ? `${res.slice(0, -1).join(', ')} and ${res[res.length - 1]}` : res[0], from: 'results' };
   const med = String(e.med || '').trim();
   if (med) return { text: [med, String(e.dose || '').trim()].filter(Boolean).join(', '), from: 'med' };
   if (String(e.temp || '').trim()) return { text: `Temperature ${fmtTemp(e.temp)}`, from: 'temp' };
@@ -247,6 +316,7 @@ function renderExtra(el) {
   else if (st.cat === 'medication') html = `${savedHTML(st)}${inp('med', 'Medicine', 'placeholder="e.g. Paracetamol"')}<div class="row2">${inp('dose', 'Dose', 'placeholder="e.g. 7.5 mL"')}${inp('time', 'Time given', 'type="time"')}</div>`;
   else if (st.cat === 'supplement') html = `${savedHTML(st)}${inp('med', 'Supplement', 'placeholder="e.g. Vitamin D"')}<div class="row2">${inp('dose', 'Amount', 'placeholder="e.g. 1 drop, 5 mL"')}${inp('time', 'Time given', 'type="time"')}</div>`;
   else if (st.cat === 'appointment') html = inp('time', 'Appointment time (optional)', 'type="time"');
+  else if (st.cat === 'bloodtest') html = labFormHTML(st, uid);
   box.innerHTML = html; box.hidden = !html;
 }
 // Medicines and supplements already logged, most recent first, so they can be added again in one tap.
@@ -286,6 +356,33 @@ function useSavedItem(el, item) {
   renderExtra(el); saveDraft(el);
 }
 
+function labFormHTML(st, uid) {
+  const id = (i, f) => `${uid}-r${i}-${f}`;
+  const field = (i, f, label, attrs) => `<div><label class="label" for="${id(i, f)}">${label}</label><input class="input" id="${id(i, f)}" data-r="${i}" data-rf="${f}" value="${esc(st.results[i][f])}" autocomplete="off" ${attrs}></div>`;
+  const rows = st.results.map((r, i) => `
+    <div class="lab-row">
+      <div class="lab-top">
+        <input class="input lab-name" id="${id(i, 'name')}" data-r="${i}" data-rf="name" value="${esc(r.name)}" placeholder="Test name" aria-label="Test name" autocomplete="off" maxlength="60">
+        <button type="button" class="icon-btn lab-del" data-rdel="${i}" aria-label="Remove ${esc(r.name || 'this result')}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="lab-grid">
+        ${field(i, 'value', 'Result', 'inputmode="decimal" maxlength="20" placeholder="e.g. 12"')}
+        ${field(i, 'unit', 'Unit', 'maxlength="20" autocapitalize="off"')}
+        ${field(i, 'low', 'Normal from', 'inputmode="decimal" maxlength="12"')}
+        ${field(i, 'high', 'Normal to', 'inputmode="decimal" maxlength="12"')}
+      </div>
+      <div class="lab-flag" data-flag="${i}">${flagHTML(labFlag(r))}</div>
+    </div>`).join('');
+  const have = new Set(st.results.map((r) => labKey(r.name)));
+  const names = [];
+  [...labSeries(live()).map((s) => s.name), ...LAB_PRESETS.map((p) => p.name)].forEach((n) => { const k = labKey(n); if (!have.has(k) && !names.some((x) => labKey(x) === k)) names.push(n); });
+  return `<span class="label">Results</span>
+    ${rows || '<p class="hint lab-empty">Add each result from the report, starting with a test below.</p>'}
+    <span class="label lab-add-label">Add a result</span>
+    <div class="chips">${names.slice(0, 10).map((n) => `<button type="button" class="chip" data-radd="${esc(n)}"><span aria-hidden="true">+</span> ${esc(n)}</button>`).join('')}<button type="button" class="chip" data-radd=""><span aria-hidden="true">+</span> Other test</button></div>
+    <p class="hint">Copy the normal range printed next to each result. Ranges differ between labs and ages, so Little One compares against the range you enter. Next time, it fills in the last range you used.</p>`;
+}
+
 function syncFormBits(el) {
   const st = el._st;
   const wrap = $('[data-sevwrap]', el); wrap.hidden = NO_CONCERN.has(st.cat);
@@ -302,6 +399,8 @@ function mountForm(el, entry, mode) {
     srcName: isParent ? (e.srcName || (mode === 'edit' ? e.by : '') || S.myName || 'Me') : '',
     sev: e.sev || 0,
     extra: { temp: e.temp || '', med: e.med || '', dose: e.dose || '', time: e.time || '' },
+    results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name || '', value: r.value || '', unit: r.unit || '', low: r.low || '', high: r.high || '' })) : [],
+    srcTouched: mode === 'edit', srcAuto: false,
   };
   el._st = st;
   el.innerHTML = formHTML(st, e, mode);
@@ -313,9 +412,11 @@ function mountForm(el, entry, mode) {
     if (b.dataset.cat) {
       st.cat = b.dataset.cat;
       $$('.cat-btn', el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      if (st.cat === 'bloodtest' && !st.srcTouched && st.src === 'parent') { st.src = 'doctor'; st.srcName = ''; st.srcAuto = true; refreshSourceChips(el); }
+      else if (st.cat !== 'bloodtest' && st.srcAuto) { st.src = 'parent'; st.srcName = S.myName || 'Me'; st.srcAuto = false; refreshSourceChips(el); }
       renderExtra(el); syncFormBits(el); saveDraft(el);
     } else if (b.dataset.src) {
-      st.src = b.dataset.src; st.srcName = b.dataset.name || '';
+      st.src = b.dataset.src; st.srcName = b.dataset.name || ''; st.srcTouched = true; st.srcAuto = false;
       $$('[data-src]', el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
       saveDraft(el);
     } else if (b.dataset.sev) {
@@ -329,6 +430,15 @@ function mountForm(el, entry, mode) {
     } else if (b.dataset.forget) {
       const item = st.savedList && st.savedList[+b.dataset.forget];
       if (item) { S.hiddenItems[item.key] = Date.now(); renderExtra(el); toast(`${item.med} removed from the list`); kvSet('hiddenItems', S.hiddenItems).catch(() => {}); }
+    } else if (b.hasAttribute('data-radd')) {
+      const name = b.dataset.radd;
+      const preset = LAB_PRESETS.find((p) => labKey(p.name) === labKey(name));
+      const prev = name ? lastRangeFor(name) : null;
+      st.results.push({ name, value: '', unit: (prev && prev.unit) || (preset && preset.unit) || '', low: prev ? prev.low : '', high: prev ? prev.high : '' });
+      renderExtra(el); saveDraft(el);
+      const f = $(`[data-r="${st.results.length - 1}"][data-rf="${name ? 'value' : 'name'}"]`, el); if (f) f.focus();
+    } else if (b.dataset.rdel !== undefined) {
+      st.results.splice(+b.dataset.rdel, 1); renderExtra(el); saveDraft(el);
     } else if (b.dataset.act === 'saved-edit') {
       st.editSaved = !st.editSaved; renderExtra(el);
     } else if (b.dataset.act === 'save-entry') {
@@ -340,10 +450,27 @@ function mountForm(el, entry, mode) {
     }
   };
   el.oninput = (ev) => {
-    const f = ev.target.dataset.x; if (f) st.extra[f] = ev.target.value;
+    const t = ev.target;
+    const f = t.dataset.x; if (f) st.extra[f] = t.value;
+    if (t.dataset.rf && t.dataset.r !== undefined) {
+      const r = st.results[+t.dataset.r];
+      if (r) { r[t.dataset.rf] = t.value; const fl = $(`[data-flag="${t.dataset.r}"]`, el); if (fl) fl.innerHTML = flagHTML(labFlag(r)); }
+    }
     saveDraft(el);
   };
-  el.onchange = el.oninput;
+  el.onchange = (ev) => {
+    el.oninput(ev);
+    const t = ev.target;
+    if (t.dataset.rf === 'name') {
+      // A known test name fills in its usual unit and the last normal range used for it.
+      const r = st.results[+t.dataset.r]; if (!r || !r.name.trim()) return;
+      const prev = lastRangeFor(r.name); const preset = LAB_PRESETS.find((p) => labKey(p.name) === labKey(r.name));
+      let changed = false;
+      if (!r.unit && ((prev && prev.unit) || preset)) { r.unit = (prev && prev.unit) || preset.unit; changed = true; }
+      if (prev && !r.low && !r.high && (prev.low || prev.high)) { r.low = prev.low; r.high = prev.high; changed = true; }
+      if (changed) renderExtra(el);
+    }
+  };
 }
 
 let draftTimer = null;
@@ -355,7 +482,7 @@ function saveDraft(el) {
     const d = {
       date: $('[data-f="date"]', el).value, tod: $('[data-f="tod"]', el).value,
       title: $('[data-f="title"]', el).value, notes: $('[data-f="notes"]', el).value,
-      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, savedAt: Date.now(),
+      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, savedAt: Date.now(),
     };
     if (d.title || d.notes || d.cat) kvSet('draft', d).catch(() => {}); else kvDel('draft').catch(() => {});
   }, 400);
@@ -378,7 +505,15 @@ async function saveForm(el) {
   if (ITEM_LABEL[st.cat] && !String(st.extra.med || '').trim()) { toast(`Add the ${ITEM_LABEL[st.cat].toLowerCase()} name`); const m = $('[data-x="med"]', el); if (m) m.focus(); return; }
   const keepNow = EXTRA_FIELDS[st.cat] || [];
   const hasDetail = (f) => keepNow.includes(f) && String(st.extra[f] || '').trim();
-  if (!title && !notes && !hasDetail('med') && !hasDetail('temp')) { toast('Add a short description or a note'); $('[data-f="title"]', el).focus(); return; }
+  let results = [];
+  if (st.cat === 'bloodtest') {
+    const rows = st.results.map((r) => ({ name: String(r.name || '').trim().slice(0, 60), value: String(r.value || '').trim().slice(0, 20), unit: String(r.unit || '').trim().slice(0, 20), low: String(r.low || '').trim().slice(0, 12), high: String(r.high || '').trim().slice(0, 12) }));
+    const noValue = rows.find((r) => r.name && !r.value);
+    if (noValue) { toast(`Add the result for ${noValue.name}, or remove it`); return; }
+    results = rows.filter((r) => r.name && r.value);
+    if (!results.length) { toast('Add at least one result, with the test name and value'); return; }
+  }
+  if (!title && !notes && !hasDetail('med') && !hasDetail('temp') && !results.length) { toast('Add a short description or a note'); $('[data-f="title"]', el).focus(); return; }
   if (!NO_CONCERN.has(st.cat) && !st.sev) { toast('Choose a concern level'); return; }
   if (!date) { toast('Choose a date'); return; }
   if (date > today()) { toast("The date can't be in the future"); return; }
@@ -394,6 +529,7 @@ async function saveForm(el) {
     const v = String(st.extra[f] || '').trim();
     if (keep.includes(f) && v) e[f] = v.slice(0, 60); else delete e[f];
   }
+  if (results.length) e.results = results; else delete e.results;
   if (prev) e.editedBy = S.myName || '';
   S.entries.set(e.id, e);
   try { await putEntries([e]); } catch (err) { toast("Couldn't save on this phone: " + (err.message || err)); return; }
@@ -417,6 +553,7 @@ function repeatEntry(e) {
     date: today(), tod: currentTod(), cat: e.cat, title: e.title, notes: '',
     src: k, srcName: k === 'parent' ? (S.myName || 'Me') : '', sev: e.sev,
     med: e.med || '', dose: e.dose || '', temp: '', time: hasTime ? `${pad(now.getHours())}:${pad(now.getMinutes())}` : '',
+    results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name, unit: r.unit || '', low: r.low || '', high: r.high || '', value: '' })) : [],
   };
   closeSheet(); switchTab('log');
   const el = $('#log-form'); mountForm(el, draft, 'new'); saveDraft(el);
@@ -452,10 +589,12 @@ function entryCardHTML(e) {
   const extra = [];
   if (e.temp && hl.from !== 'temp') extra.push(`Temperature ${esc(fmtTemp(e.temp))}`);
   if ((e.med || e.dose) && hl.from !== 'med') extra.push(`${esc(e.med || ITEM_LABEL[e.cat] || 'Medicine')}${e.dose ? ', ' + esc(e.dose) : ''}`);
-  return `<button type="button" class="entry-card" data-id="${esc(e.id)}" data-sev="${e.sev || 1}" data-cat="${esc(e.cat)}">
+  const flagged = Array.isArray(e.results) && e.results.some((r) => /low|high/.test(labFlag(r)));
+  return `<button type="button" class="entry-card" data-id="${esc(e.id)}" data-sev="${e.sev || 1}" data-cat="${esc(e.cat)}"${flagged ? ' data-flagged="1"' : ''}>
     <div class="entry-top"><span class="entry-cat"><span aria-hidden="true">${c.em}</span> ${c.label}</span><span class="entry-when">${esc(when)}</span></div>
     <div class="entry-title">${esc(hl.text)}</div>
     ${extra.length ? `<div class="entry-extra">${extra.join(' · ')}</div>` : ''}
+    ${Array.isArray(e.results) && e.results.length ? `<div class="lab-results">${e.results.map((r) => `<div class="lab-res"><span class="lab-res-name">${esc(r.name)}</span><span class="lab-res-val">${esc(r.value)} ${esc(r.unit || '')}</span>${flagHTML(labFlag(r))}</div>`).join('')}</div>` : ''}
     ${e.notes && hl.from !== 'notes-all' ? `<div class="entry-notes">${esc(e.notes)}</div>` : ''}
     <div class="tags">
       ${noConcern(e) ? '' : `<span class="tag">${SEV[e.sev] || 'Mild'} concern</span>`}
@@ -475,7 +614,7 @@ function renderHistory() {
 
   const q = S.hist.q.trim().toLowerCase();
   const list = all.filter((e) => (S.hist.cat === 'all' || e.cat === S.hist.cat)
-    && (!q || [e.title, e.notes, e.med, e.dose, srcLabel(e), e.by, (CAT[e.cat] || {}).label].join(' ').toLowerCase().includes(q)));
+    && (!q || [e.title, e.notes, e.med, e.dose, srcLabel(e), e.by, (CAT[e.cat] || {}).label, ...(Array.isArray(e.results) ? e.results.map((r) => r.name) : [])].join(' ').toLowerCase().includes(q)));
   const box = $('#entry-list');
   if (!list.length) {
     box.innerHTML = `<div class="empty"><div class="big" aria-hidden="true">📋</div><p>${all.length ? 'Nothing matches that search or filter.' : 'No entries yet. Add the first one from the Log tab.'}</p></div>`;
@@ -520,6 +659,10 @@ function top(obj) { return Object.entries(obj).sort((a, b) => b[1] - a[1])[0]; }
 
 function findPatterns(list, st) {
   const P = [];
+  labSeries(list).forEach((s) => {
+    const p = s.latest;
+    if (p.flag === 'low' || p.flag === 'high') P.push({ ic: '🧪', text: `**${s.name}** was **${p.flag}** at the latest test: ${p.value} ${p.unit || s.unit} on ${fmtDayShort(p.date)} (normal ${labRange(p)}).` });
+  });
   const t = today();
   const hard = list.filter((e) => e.sev >= 2 && !noConcern(e));
   if (list.length >= 3) {
@@ -601,6 +744,63 @@ function weeksHTML(list) {
   <p class="sr-only">${weeks.map((w) => `Week of ${w.start}: ${w.all} entries, ${w.hi} high concern`).join('. ')}</p>`;
 }
 
+function labChartSVG(s, si) {
+  const pts = s.points.filter((p) => isFinite(p.num)); if (pts.length < 2) return '';
+  const W = 320; const H = 124; const L = 6; const R = 44; const T = 18; const B = 24;
+  const lo = labNum(s.latest.low); const hi = labNum(s.latest.high);
+  const { vmin, vmax, showLo, showHi } = labDomain(pts.map((p) => p.num), lo, hi);
+  const t0 = parseYmd(pts[0].date).getTime(); const t1 = parseYmd(pts[pts.length - 1].date).getTime();
+  const x = (d) => (t1 === t0 ? (L + W - R) / 2 : L + ((parseYmd(d).getTime() - t0) / (t1 - t0)) * (W - L - R));
+  const y = (v) => T + (1 - (v - vmin) / (vmax - vmin)) * (H - T - B);
+  const f1 = (n) => n.toFixed(1);
+  const short = (d) => { const dt = parseYmd(d); return dt.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: '2-digit' }); };
+  let svg = `<svg class="lab-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(s.name)} results over time">`;
+  const bandShown = (isFinite(lo) && (showLo || lo < vmin)) || (isFinite(hi) && (showHi || hi > vmax));
+  if (bandShown && !(isFinite(lo) && lo > vmax) && !(isFinite(hi) && hi < vmin)) {
+    const yt = isFinite(hi) && showHi ? y(hi) : 2; const yb = isFinite(lo) && showLo ? y(lo) : H - B;
+    svg += `<rect class="lab-band" x="${L}" y="${f1(yt)}" width="${W - L - R}" height="${f1(Math.max(1, yb - yt))}" rx="3"></rect>`;
+  }
+  if (isFinite(hi)) svg += showHi ? `<text class="lab-axis" x="${W - R + 6}" y="${f1(y(hi) + 3.5)}">${esc(s.latest.high)}</text>` : hi > vmax ? `<text class="lab-axis" x="${W - R + 6}" y="11">↑ ${esc(s.latest.high)}</text>` : '';
+  if (isFinite(lo)) svg += showLo ? `<text class="lab-axis" x="${W - R + 6}" y="${f1(y(lo) + 3.5)}">${esc(s.latest.low)}</text>` : lo < vmin ? `<text class="lab-axis" x="${W - R + 6}" y="${H - B - 2}">↓ ${esc(s.latest.low)}</text>` : '';
+  svg += `<line class="lab-base" x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}"></line>`;
+  svg += `<path class="lab-line" d="${pts.map((p, i) => `${i ? 'L' : 'M'}${f1(x(p.date))},${f1(y(p.num))}`).join(' ')}"></path>`;
+  pts.forEach((p, i) => {
+    const label = `${p.value} ${p.unit || s.unit} on ${fmtDateFull(p.date)}${p.flag ? ` (${FLAG_LABEL[p.flag].toLowerCase()})` : ''}`;
+    svg += `<circle class="lab-pt ${p.flag}" data-series="${si}" data-i="${i}" cx="${f1(x(p.date))}" cy="${f1(y(p.num))}" r="4.5"><title>${esc(label)}</title></circle>`;
+    svg += `<circle class="lab-hit" data-pt="${esc(label)}" data-series="${si}" data-i="${i}" cx="${f1(x(p.date))}" cy="${f1(y(p.num))}" r="16"></circle>`;
+  });
+  const last = pts[pts.length - 1];
+  const lx = x(last.date); const ly = y(last.num);
+  svg += `<text class="lab-val" x="${f1(lx)}" y="${f1(ly - 9)}" text-anchor="end">${esc(last.value)}</text>`;
+  svg += `<text class="lab-axis" x="${L}" y="${H - 7}">${esc(short(pts[0].date))}</text><text class="lab-axis" x="${W - R}" y="${H - 7}" text-anchor="end">${esc(short(last.date))}</text>`;
+  return svg + '</svg>';
+}
+
+function labCardHTML(all) {
+  const series = labSeries(all); if (!series.length) return '';
+  return `<div class="card"><h3 class="card-title">Blood tests</h3><p class="hint intro">Every result logged, newest test first. The shaded band is the normal range from the latest report. Tap a dot to see its value.</p>
+    ${series.map((s, si) => {
+      const p = s.latest; const prev = s.points.length > 1 ? s.points[s.points.length - 2] : null;
+      let change = '';
+      if (prev && isFinite(p.num) && isFinite(prev.num)) change = p.num === prev.num ? `Same as on ${fmtDateFull(prev.date)}` : `${p.num > prev.num ? 'Up' : 'Down'} from ${prev.value} on ${fmtDateFull(prev.date)}`;
+      let iron = '';
+      if (/ferritin|iron|haemoglobin|hemoglobin|transferrin/i.test(s.name)) {
+        const c = ironCounts(all, prev && prev.date, p.date);
+        const bits = [];
+        if (c.between) bits.push(`${c.between} time${c.between > 1 ? 's' : ''} between the last two tests`);
+        if (c.since) bits.push(`${c.since} time${c.since > 1 ? 's' : ''} since the latest`);
+        if (bits.length) iron = `<div class="lab-note">Iron logged ${bits.join(', and ')}.</div>`;
+      }
+      return `<div class="lab-trend">
+        <div class="lab-trend-head"><b>${esc(s.name)}</b>${flagHTML(p.flag)}</div>
+        <div class="lab-latest"><span class="lab-big">${esc(p.value)}</span> ${esc(p.unit || s.unit)}<span class="lab-when">${esc(fmtDateFull(p.date))}${labRange(p) ? ` · normal ${esc(labRange(p))}` : ' · no normal range entered'}</span></div>
+        ${change ? `<div class="lab-change">${esc(change)}</div>` : ''}
+        ${labChartSVG(s, si)}${s.points.length > 1 ? `<p class="lab-tip" data-tip="${si}" aria-live="polite"></p>` : ''}
+        ${iron}
+      </div>`;
+    }).join('')}</div>`;
+}
+
 function renderInsights() {
   const ranges = [['30', 'Last 30 days'], ['90', 'Last 90 days'], ['all', 'All time']];
   const rr = $('#insight-range');
@@ -609,8 +809,15 @@ function renderInsights() {
   const all = live();
   const list = S.insightRange === 'all' ? all : rangeFilter(all, addDays(today(), -(+S.insightRange - 1)), today());
   const box = $('#insights');
+  const labs = labCardHTML(all);
+  box.onclick = (ev) => {
+    const hit = ev.target.closest('[data-pt]'); if (!hit) return;
+    const tip = $(`[data-tip="${hit.dataset.series}"]`, box);
+    if (tip) tip.textContent = hit.dataset.pt;
+    $$(`.lab-pt[data-series="${hit.dataset.series}"]`, box).forEach((c) => c.classList.toggle('sel', c.dataset.i === hit.dataset.i));
+  };
   if (!list.length) {
-    box.innerHTML = `<div class="card mt14"><div class="empty"><div class="big" aria-hidden="true">✨</div><p>${all.length ? 'No entries in this period.' : 'Log a few entries and patterns will appear here.'}</p></div></div>`;
+    box.innerHTML = `<div class="card mt14"><div class="empty"><div class="big" aria-hidden="true">✨</div><p>${all.length ? 'No entries in this period.' : 'Log a few entries and patterns will appear here.'}</p></div></div>${labs}`;
     return;
   }
   const st = computeStats(list);
@@ -628,6 +835,7 @@ function renderInsights() {
       </div>
       <div class="badge ${badge.tone}">${esc(badge.text)}</div>
     </div>
+    ${labs}
     <div class="card"><h3 class="card-title">Patterns noticed</h3>${st.patterns.map((p) => `<div class="pattern"><span class="ic" aria-hidden="true">${p.ic}</span><span>${strong(p.text)}</span></div>`).join('')}</div>
     <div class="card"><h3 class="card-title">Last 8 weeks</h3>${weeksHTML(all)}</div>
     <div class="card"><h3 class="card-title">By area</h3>${barsHTML(catRows, catRows[0] ? catRows[0][1] : 0)}</div>
@@ -642,7 +850,7 @@ function defaultExport() {
   return {
     range: '30', from: addDays(today(), -29), to: today(),
     cats: new Set(CATS.map((c) => c.k)), srcs: new Set(SOURCES.map((s) => s.k)), sevs: new Set([1, 2, 3]),
-    summary: true, notes: true, by: true, order: 'date',
+    summary: true, notes: true, by: true, labs: true, order: 'date',
   };
 }
 function exportPeriod() {
@@ -684,7 +892,7 @@ function renderExport() {
     <div class="group">
       <div class="group-head"><span class="label">Concern level</span></div>
       <div class="check-list">${[1, 2, 3].map((n) => check('sevs', String(n), SEV[n], '', vc[n], x.sevs.has(n))).join('')}</div>
-      <p class="hint">Wins and supplements don't have a concern level, so they're included whenever their area is ticked.</p>
+      <p class="hint">Wins, supplements and blood tests don't have a concern level, so they're included whenever their area is ticked.</p>
     </div>
     <div class="group">
       <div class="group-head"><span class="label">Include</span></div>
@@ -692,6 +900,7 @@ function renderExport() {
         ${toggle('summary', 'Summary and patterns', 'Counts by area, time of day and who saw it')}
         ${toggle('notes', 'Notes', 'The full notes written for each entry')}
         ${toggle('by', 'Who logged each entry')}
+        ${toggle('labs', 'Blood test table and charts', 'Each test over time, with its normal range')}
       </div>
     </div>
     <div class="group">
@@ -753,7 +962,7 @@ function reportData() {
     areas: describeSet(x.cats, CATS.map((c) => c.k), (k) => CAT[k].label, 'All areas'),
     sources: describeSet(x.srcs, SOURCES.map((s) => s.k), (k) => SRC[k].label, 'Everyone'),
     levels: describeSet(x.sevs, [1, 2, 3], (k) => SEV[k], 'All levels'),
-    opts: { summary: x.summary, notes: x.notes, by: x.by, order: x.order },
+    opts: { summary: x.summary, notes: x.notes, by: x.by, labs: x.labs, order: x.order },
     entries: list, stats: computeStats(list), badge: null,
   };
 }
@@ -763,7 +972,7 @@ async function makePdf(btn) {
   try {
     const { buildPdf } = await import('./pdf.js');
     const data = reportData(); data.badge = concernBadge(data.stats);
-    const { blob, pages } = await buildPdf(data, { CAT, SEV, SRC, srcKey, srcLabel, fmtDayLong, fmtDayShort, fmtTime, fmtTemp, noConcern, ITEM_LABEL, headline });
+    const { blob, pages } = await buildPdf(data, { CAT, SEV, SRC, srcKey, srcLabel, fmtDayLong, fmtDayShort, fmtTime, fmtTemp, noConcern, ITEM_LABEL, headline, labSeries, labFlag, labRange, labNum, labDomain, FLAG_LABEL });
     S.lastPdf = { blob, pages, name: `little-one-report-${today()}.pdf` };
     renderPdfReady();
     $('#pdf-ready').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -791,6 +1000,7 @@ function reportText() {
     L.push(hl.text, `  ${meta}`);
     if (e.temp && hl.from !== 'temp') L.push(`  Temperature: ${fmtTemp(e.temp)}`);
     if ((e.med || e.dose) && hl.from !== 'med') L.push(`  ${ITEM_LABEL[e.cat] || 'Medicine'}: ${[e.med, e.dose].filter(Boolean).join(', ')}`);
+    (Array.isArray(e.results) ? e.results : []).forEach((r) => { const f = labFlag(r); L.push(`  ${r.name}: ${r.value} ${r.unit || ''}${labRange(r) ? ` (normal ${labRange(r)})` : ''}${f === 'low' || f === 'high' ? ` ${FLAG_LABEL[f].toUpperCase()}` : ''}`); });
     if (d.opts.notes && e.notes && hl.from !== 'notes-all') L.push(`  Notes: ${e.notes.replace(/\n/g, '\n  ')}`);
     L.push('');
   });

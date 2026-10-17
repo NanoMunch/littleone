@@ -245,6 +245,8 @@ input[type="date"].input::-webkit-date-and-time-value, input[type="time"].input:
 .entry-card[data-sev="3"]::before { background: var(--alert); }
 .entry-card[data-cat="win"]::before { background: var(--terracotta); }
 .entry-card[data-cat="supplement"]::before { background: var(--sky); }
+.entry-card[data-cat="bloodtest"]::before { background: var(--sage); }
+.entry-card[data-flagged="1"]::before { background: var(--alert); }
 .entry-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 4px; }
 .entry-cat { font-size: .8rem; font-weight: 500; color: var(--muted); }
 .entry-when { font-size: .78rem; color: var(--muted); font-family: var(--serif); font-style: italic; white-space: nowrap; }
@@ -417,3 +419,42 @@ a.btn { text-decoration: none; }
 .saved.editing .forget { display: inline-flex; }
 .saved.editing .chip { opacity: .75; }
 .saved-empty { margin: 0 0 12px; }
+
+/* blood tests */
+.flag { display: inline-flex; align-items: center; gap: 2px; padding: 2px 9px; border-radius: 999px; font-size: .74rem; font-weight: 600; white-space: nowrap; }
+.flag.low, .flag.high { background: var(--alert-bg); color: var(--alert); }
+.flag.ok { background: var(--sage-bg); color: var(--sage); }
+.lab-row { background: var(--card); border: 1.5px solid var(--line); border-radius: 14px; padding: 10px 10px 6px; margin-bottom: 10px; }
+.lab-top { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.lab-top .input { flex: 1; font-weight: 600; }
+.lab-del { color: var(--muted); }
+.lab-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.lab-grid .label { font-size: .76rem; margin-bottom: 4px; }
+.lab-flag { min-height: 30px; padding: 7px 0 2px; }
+.lab-add-label { margin-top: 6px; }
+.lab-empty { margin: 0 0 12px; }
+.extra .lab-row .input { background: var(--bg); }
+.lab-results { display: grid; gap: 5px; margin: 6px 0 2px; }
+.lab-res { display: flex; align-items: center; gap: 8px; font-size: .88rem; flex-wrap: wrap; }
+.lab-res-name { color: var(--muted); }
+.lab-res-val { font-weight: 600; font-variant-numeric: tabular-nums; }
+.lab-trend { padding: 14px 0 6px; border-top: 1px solid var(--line); }
+.lab-trend:first-of-type { border-top: 0; padding-top: 2px; }
+.lab-trend-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.lab-trend-head b { font-family: var(--serif); font-weight: 400; font-size: 1.08rem; }
+.lab-latest { margin-top: 2px; font-size: .9rem; color: var(--muted); }
+.lab-big { font-family: var(--serif); font-size: 1.7rem; color: var(--ink); font-variant-numeric: lining-nums; }
+.lab-when { display: block; font-size: .8rem; }
+.lab-change { font-size: .86rem; margin-top: 4px; }
+.lab-note { font-size: .84rem; color: var(--muted); margin-top: 6px; }
+.lab-tip { min-height: 1.3em; font-size: .82rem; color: var(--muted); margin: 2px 0 0; }
+.lab-chart { display: block; width: 100%; height: auto; margin-top: 10px; overflow: visible; }
+.lab-band { fill: var(--sage); opacity: .16; }
+.lab-base { stroke: var(--line); stroke-width: 1; }
+.lab-line { fill: none; stroke: var(--terracotta); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.lab-pt { fill: var(--terracotta); stroke: var(--card); stroke-width: 2; }
+.lab-pt.low, .lab-pt.high { fill: var(--alert); }
+.lab-pt.sel { stroke: var(--ink); }
+.lab-hit { fill: transparent; cursor: pointer; }
+.lab-axis { fill: var(--muted); font-size: 10px; font-family: var(--sans); }
+.lab-val { fill: var(--ink); font-size: 11px; font-weight: 600; font-family: var(--sans); }

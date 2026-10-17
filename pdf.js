@@ -46,6 +46,7 @@ function longDate(s) {
   const [y, m, d] = String(s).split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
+function parse(s) { const [y, m, d] = String(s).split('-').map(Number); return new Date(y, m - 1, d).getTime(); }
 function shortDate(s) {
   const [y, m, d] = String(s).split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }).replace(',', '');
@@ -163,9 +164,71 @@ export async function buildPdf(data, h) {
     y += 8;
   }
 
+  // ---------- blood tests ----------
+  const series = h.labSeries(data.entries);
+  if (data.opts.labs && series.length) {
+    h2('Blood test results');
+    write('Normal ranges are the ones entered from each report. Results outside them are marked.', ML, CW, 'serif', 'italic', 9, C.muted, 1.45);
+    y += 4;
+    const cols = [ML, ML + 42, ML + 86, ML + 136];
+    for (const s of series) {
+      const pts = s.points; const numeric = pts.filter((p) => isFinite(p.num));
+      const chartH = numeric.length >= 2 ? 36 : 0;
+      const need = 8 + 6 + pts.length * 5.4 + chartH + 8;
+      ensure(need <= H - MB - MT ? need : 30);
+      font('sans', 'bold', 10.5, C.deep); doc.text(clean(`${s.name}${s.unit ? ` (${s.unit})` : ''}`), ML, y, { baseline: 'top' }); y += 6.5;
+      font('sans', 'bold', 8, C.muted);
+      ['Date', 'Result', 'Normal range', ''].forEach((t, i) => doc.text(t, cols[i], y, { baseline: 'top' }));
+      y += 4.6; doc.setDrawColor(...C.line); doc.setLineWidth(0.2); doc.line(ML, y - 0.8, W - MR, y - 0.8);
+      for (const p of pts) {
+        if (ensure(5.4)) { font('sans', 'bold', 8, C.muted); }
+        font('sans', 'normal', 9, C.deep);
+        doc.text(shortDate(p.date), cols[0], y, { baseline: 'top' });
+        doc.text(clean(`${p.value} ${p.unit || ''}`), cols[1], y, { baseline: 'top' });
+        doc.text(clean(h.labRange(p) || '-'), cols[2], y, { baseline: 'top' });
+        if (p.flag) { font('sans', 'bold', 9, p.flag === 'ok' ? C.sage : C.alert); doc.text(p.flag === 'low' ? '↓ Low' : p.flag === 'high' ? '↑ High' : 'In range', cols[3], y, { baseline: 'top' }); }
+        y += 5.4;
+      }
+      if (chartH) {
+        y += 2; ensure(chartH);
+        const cx0 = ML; const cw = CW - 16; const top = y + 4; const bot = y + chartH - 8;
+        const lo = h.labNum(s.latest.low); const hi = h.labNum(s.latest.high);
+        const { vmin, vmax, showLo, showHi } = h.labDomain(numeric.map((p) => p.num), lo, hi);
+        const t0 = parse(numeric[0].date); const t1 = parse(numeric[numeric.length - 1].date);
+        const px = (d) => (t1 === t0 ? cx0 + cw / 2 : cx0 + ((parse(d) - t0) / (t1 - t0)) * cw);
+        const py = (v) => top + (1 - (v - vmin) / (vmax - vmin)) * (bot - top);
+        const bandShown = (isFinite(lo) && (showLo || lo < vmin)) || (isFinite(hi) && (showHi || hi > vmax));
+        if (bandShown && !(isFinite(lo) && lo > vmax) && !(isFinite(hi) && hi < vmin)) {
+          const yt = isFinite(hi) && showHi ? py(hi) : top - 3; const yb = isFinite(lo) && showLo ? py(lo) : bot;
+          doc.setFillColor(234, 243, 235); doc.rect(cx0, yt, cw, Math.max(0.5, yb - yt), 'F');
+        }
+        font('sans', 'normal', 7.5, C.muted);
+        if (isFinite(hi)) { if (showHi) doc.text(clean(s.latest.high), cx0 + cw + 2, py(hi), { baseline: 'middle' }); else if (hi > vmax) doc.text(clean(`↑ ${s.latest.high}`), cx0 + cw + 2, top - 1, { baseline: 'middle' }); }
+        if (isFinite(lo)) { if (showLo) doc.text(clean(s.latest.low), cx0 + cw + 2, py(lo), { baseline: 'middle' }); else if (lo < vmin) doc.text(clean(`↓ ${s.latest.low}`), cx0 + cw + 2, bot - 1, { baseline: 'middle' }); }
+        doc.setDrawColor(...C.line); doc.setLineWidth(0.2); doc.line(cx0, bot, cx0 + cw, bot);
+        doc.setDrawColor(...C.terra); doc.setLineWidth(0.6);
+        for (let i = 1; i < numeric.length; i++) doc.line(px(numeric[i - 1].date), py(numeric[i - 1].num), px(numeric[i].date), py(numeric[i].num));
+        numeric.forEach((p) => {
+          doc.setDrawColor(255, 255, 255); doc.setLineWidth(0.5);
+          doc.setFillColor(...(p.flag === 'low' || p.flag === 'high' ? C.alert : C.terra));
+          doc.circle(px(p.date), py(p.num), 1.2, 'FD');
+        });
+        const last = numeric[numeric.length - 1];
+        font('sans', 'bold', 8, C.deep); doc.text(clean(last.value), px(last.date) - 1.5, py(last.num) - 2.2, { align: 'right' });
+        font('sans', 'normal', 7.5, C.muted);
+        doc.text(shortDate(numeric[0].date), cx0, bot + 2, { baseline: 'top' });
+        doc.text(shortDate(last.date), cx0 + cw, bot + 2, { baseline: 'top', align: 'right' });
+        y += chartH;
+      }
+      y += 6;
+    }
+    y += 2;
+  }
+
   // ---------- entries ----------
   h2(`Entries (${data.entries.length})`);
-  const sevColor = (e) => (e.cat === 'win' ? C.terra : e.cat === 'supplement' ? C.sky : e.sev === 3 ? C.alert : e.sev === 2 ? C.gold : C.sage);
+  const flaggedLab = (e) => Array.isArray(e.results) && e.results.some((r) => /low|high/.test(h.labFlag(r)));
+  const sevColor = (e) => (e.cat === 'win' ? C.terra : e.cat === 'bloodtest' ? (flaggedLab(e) ? C.alert : C.sage) : e.cat === 'supplement' ? C.sky : e.sev === 3 ? C.alert : e.sev === 2 ? C.gold : C.sage);
   const block = (e, showDate, showArea) => {
     const x0 = ML + 4.5; const w = CW - 4.5;
     const cat = h.CAT[e.cat] || h.CAT.other;
@@ -185,6 +248,12 @@ export async function buildPdf(data, h) {
     font('sans', 'bold', 10.5, C.deep); parts.push({ L: lines(hl.text, w), fam: 'sans', style: 'bold', size: 10.5, color: C.deep, step: lh(10.5, 1.35), gap: 0.6 });
     font('sans', 'normal', 8.5, C.muted); parts.push({ L: lines(metaBits.join('  ·  '), w), fam: 'sans', style: 'normal', size: 8.5, color: C.muted, step: lh(8.5, 1.45), gap: 0.8 });
     if (extra.length) { font('sans', 'normal', 9, C.deep); parts.push({ L: lines(extra.join('     '), w), fam: 'sans', style: 'normal', size: 9, color: C.deep, step: lh(9, 1.45), gap: 0.6 }); }
+    if (Array.isArray(e.results) && e.results.length) {
+      font('sans', 'normal', 9, C.deep);
+      const L = [];
+      e.results.forEach((r) => { const f = h.labFlag(r); L.push(...lines(`${r.name}: ${r.value} ${r.unit || ''}${h.labRange(r) ? `   (normal ${h.labRange(r)})` : ''}${f === 'low' ? '   ↓ LOW' : f === 'high' ? '   ↑ HIGH' : ''}`, w)); });
+      parts.push({ L, fam: 'sans', style: 'normal', size: 9, color: C.deep, step: lh(9, 1.45), gap: 0.6 });
+    }
     if (data.opts.notes && clean(e.notes) && hl.from !== 'notes-all') {
       font('sans', 'normal', 9.5, C.deep);
       const L = []; clean(e.notes).split('\n').forEach((para) => { if (para.trim()) L.push(...lines(para, w)); else L.push(''); });

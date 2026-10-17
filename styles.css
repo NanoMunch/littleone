@@ -243,6 +243,7 @@ input[type="date"].input::-webkit-date-and-time-value, input[type="time"].input:
 .entry-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--sage); }
 .entry-card[data-sev="2"]::before { background: var(--gold); }
 .entry-card[data-sev="3"]::before { background: var(--alert); }
+.entry-card[data-sev="0"]::before { background: var(--lavender); }
 .entry-card[data-cat="win"]::before { background: var(--terracotta); }
 .entry-card[data-cat="supplement"]::before { background: var(--sky); }
 .entry-card[data-cat="bloodtest"]::before { background: var(--sage); }
@@ -458,3 +459,11 @@ a.btn { text-decoration: none; }
 .lab-hit { fill: transparent; cursor: pointer; }
 .lab-axis { fill: var(--muted); font-size: 10px; font-family: var(--sans); }
 .lab-val { fill: var(--ink); font-size: 11px; font-weight: 600; font-family: var(--sans); }
+
+/* overnight sleep */
+.sleep-hint { margin: -6px 0 12px; }
+.sleep-chart { display: block; width: 100%; height: auto; margin-top: 12px; overflow: visible; }
+.sleep-band { fill: var(--sage); opacity: .16; }
+.sleep-bar { fill: var(--lavender); }
+.sleep-bar.sel { fill: var(--deep); }
+.sleep-avg { stroke: var(--terracotta); stroke-width: 1.5; }

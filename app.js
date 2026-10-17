@@ -1,7 +1,7 @@
 import { getAllEntries, putEntries, kvGet, kvSet, kvDel } from './db.js';
 import * as Sync from './sync.js';
 
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.2.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -34,11 +34,64 @@ export const TODS = [
 ];
 const TOD_RANK = { Overnight: 0, Morning: 1, Midday: 2, Afternoon: 3, Evening: 4, Night: 5 };
 export const SEV = { 1: 'Mild', 2: 'Moderate', 3: 'High' };
-const EXTRA_FIELDS = { health: ['temp', 'time'], medication: ['med', 'dose', 'time'], supplement: ['med', 'dose', 'time'], appointment: ['time'], bloodtest: [] };
+const EXTRA_FIELDS = { sleep: ['time'], health: ['temp', 'time'], medication: ['med', 'dose', 'time'], supplement: ['med', 'dose', 'time'], appointment: ['time'], bloodtest: [] };
 // Areas where a concern level doesn't apply (shown without one, and left out of concern counts).
 export const NO_CONCERN = new Set(['win', 'supplement', 'bloodtest']);
-export const noConcern = (e) => NO_CONCERN.has(e.cat);
+export const noConcern = (e) => NO_CONCERN.has(e.cat) || !e.sev;
 export const ITEM_LABEL = { medication: 'Medicine', supplement: 'Supplement' };
+
+// ---------------------------------------------------------------- overnight sleep
+// Sleep entries can be marked "went to sleep" (sleep: 'bed') or "woke up" (sleep: 'wake'), each with a time.
+// A bedtime followed by the next wake-up 3–16 hours later makes one night.
+export const SLEEP_GUIDES = {
+  '3-5': { lo: 600, hi: 780, short: '10–13 h', text: '10–13 hours a day for ages 3–5, including naps' },
+  '5-13': { lo: 540, hi: 660, short: '9–11 h', text: '9–11 hours a night for ages 5–13' },
+};
+const SLEEP_KINDS = [['bed', '😴', 'Went to sleep'], ['wake', '☀️', 'Woke up'], ['', '📝', 'Something else']];
+function kindForTod(tod) { return tod === 'Evening' || tod === 'Night' ? 'bed' : tod === 'Morning' ? 'wake' : ''; }
+function todForTime(t) {
+  const m = /^(\d{1,2}):/.exec(t || ''); if (!m) return null; const h = +m[1];
+  if (h < 5) return 'Overnight'; if (h < 11) return 'Morning'; if (h < 13) return 'Midday';
+  if (h < 17) return 'Afternoon'; if (h < 20) return 'Evening'; return 'Night';
+}
+export function fmtDur(mins) { const t = Math.round(mins); const h = Math.floor(t / 60); const m = t % 60; return m ? `${h} h ${m} min` : `${h} h`; }
+function evtTime(e, fallback) {
+  const [y, mo, d] = String(e.date).split('-').map(Number);
+  const m = /^(\d{1,2}):(\d{2})/.exec(e.time || '');
+  if (m) return new Date(y, mo - 1, d, +m[1], +m[2]).getTime();
+  return fallback ? new Date(y, mo - 1, d, fallback, 0).getTime() : null;
+}
+const hhmm = (ms) => { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+export function sleepNights(list) {
+  const ev = list.filter((e) => e.cat === 'sleep' && (e.sleep === 'bed' || e.sleep === 'wake'))
+    .map((e) => ({ e, t: evtTime(e) })).filter((x) => x.t != null).sort((a, b) => a.t - b.t);
+  const wakings = list.filter((e) => e.cat === 'sleep' && !e.sleep).map((e) => evtTime(e, e.tod === 'Overnight' ? 2 : 0)).filter((t) => t != null);
+  const nights = []; let bed = null;
+  for (const x of ev) {
+    if (x.e.sleep === 'bed') { bed = x; continue; }
+    if (!bed) continue;
+    const mins = Math.round((x.t - bed.t) / 60000);
+    if (mins >= 180 && mins <= 960) {
+      nights.push({ date: bed.e.date, wakeDate: x.e.date, bed: hhmm(bed.t), wake: hhmm(x.t), mins, wakings: wakings.filter((t) => t > bed.t && t < x.t).length, bedId: bed.e.id, wakeId: x.e.id });
+      bed = null;
+    } else if (mins > 960) bed = null;
+  }
+  return nights;
+}
+function clockAvg(times, wrap) {
+  const mins = times.map((t) => { const [h, m] = t.split(':').map(Number); const v = h * 60 + m; return wrap && v < 720 ? v + 1440 : v; });
+  const avg = Math.round(mins.reduce((a, b) => a + b, 0) / mins.length) % 1440;
+  return `${pad(Math.floor(avg / 60))}:${pad(avg % 60)}`;
+}
+export function sleepSummary(nights) {
+  if (!nights.length) return null;
+  return {
+    n: nights.length, avg: nights.reduce((a, b) => a + b.mins, 0) / nights.length,
+    bed: clockAvg(nights.map((x) => x.bed), true), wake: clockAvg(nights.map((x) => x.wake), false),
+    woke: nights.filter((x) => x.wakings).length,
+  };
+}
+export function sleepGuide() { const k = S.profile.sleepGuide || '3-5'; return k === 'off' ? null : SLEEP_GUIDES[k] || SLEEP_GUIDES['3-5']; }
 
 // ---------------------------------------------------------------- blood tests
 // Each blood test entry holds a list of results: { name, value, unit, low, high }.
@@ -159,6 +212,7 @@ export function srcLabel(e) {
 // What to show as an entry's heading. The description is optional when something else describes
 // the entry (a medicine or supplement, a temperature, or notes).
 export function headline(e, allowNotes = true) {
+  if (e.cat === 'sleep' && (e.sleep === 'bed' || e.sleep === 'wake')) return { text: `${e.sleep === 'bed' ? 'Went to sleep' : 'Woke up'}${e.time ? ` at ${fmtTime(e.time)}` : ''}`, from: 'sleep' };
   const t = String(e.title || '').trim();
   if (t) return { text: t, from: 'title' };
   const res = Array.isArray(e.results) ? e.results.filter((r) => r && String(r.name || '').trim()).map((r) => String(r.name).trim()) : [];
@@ -288,7 +342,7 @@ function formHTML(st, e, mode) {
   <div class="field"><label class="label" for="${uid}-title" data-titlelabel>What happened?</label><input class="input" id="${uid}-title" data-f="title" maxlength="160" autocomplete="off" enterkeyhint="next" value="${esc(e.title || '')}"></div>
   <div class="field"><label class="label" for="${uid}-notes">Notes</label><textarea class="textarea" id="${uid}-notes" data-f="notes" placeholder="What was happening before? How long did it last? What helped?">${esc(e.notes || '')}</textarea></div>
   <div class="field" data-sevwrap>
-    <span class="label" id="${uid}-sevl">Concern level</span>
+    <span class="label" id="${uid}-sevl" data-sevlabel>Concern level</span>
     <div class="sev-row" role="group" aria-labelledby="${uid}-sevl">${[1, 2, 3].map((n) => `<button type="button" class="sev-btn" data-sev="${n}" aria-pressed="${st.sev === n}"><span class="sw" aria-hidden="true"></span>${SEV[n]}</button>`).join('')}</div>
   </div>
   <button class="btn primary block" type="button" data-act="save-entry">${mode === 'edit' ? 'Save changes' : 'Save entry'}</button>
@@ -317,6 +371,13 @@ function renderExtra(el) {
   else if (st.cat === 'supplement') html = `${savedHTML(st)}${inp('med', 'Supplement', 'placeholder="e.g. Vitamin D"')}<div class="row2">${inp('dose', 'Amount', 'placeholder="e.g. 1 drop, 5 mL"')}${inp('time', 'Time given', 'type="time"')}</div>`;
   else if (st.cat === 'appointment') html = inp('time', 'Appointment time (optional)', 'type="time"');
   else if (st.cat === 'bloodtest') html = labFormHTML(st, uid);
+  else if (st.cat === 'sleep') {
+    const k = st.sleepKind;
+    html = `<span class="label">This entry is</span>
+      <div class="chips">${SLEEP_KINDS.map(([v, em, l]) => `<button type="button" class="chip solid" data-kind="${v}" aria-pressed="${k === v}"><span aria-hidden="true">${em}</span>${l}</button>`).join('')}</div>
+      <div class="mt14">${inp('time', k === 'bed' ? 'Asleep at' : k === 'wake' ? 'Woke up at' : 'Time (optional)', 'type="time"')}</div>
+      ${k ? `<p class="hint sleep-hint">${k === 'bed' ? "Pairs with the next wake-up to work out the night's sleep." : "Pairs with last night's sleep time to work out how long they slept."}</p>` : ''}`;
+  }
   box.innerHTML = html; box.hidden = !html;
 }
 // Medicines and supplements already logged, most recent first, so they can be added again in one tap.
@@ -383,11 +444,21 @@ function labFormHTML(st, uid) {
     <p class="hint">Copy the normal range printed next to each result. Ranges differ between labs and ages, so Little One compares against the range you enter. Next time, it fills in the last range you used.</p>`;
 }
 
+function sleepKindOn(st) { return st.cat === 'sleep' && (st.sleepKind === 'bed' || st.sleepKind === 'wake'); }
 function syncFormBits(el) {
   const st = el._st;
   const wrap = $('[data-sevwrap]', el); wrap.hidden = NO_CONCERN.has(st.cat);
-  $('[data-f="title"]', el).placeholder = (CAT[st.cat] || CAT.other).ph;
-  $('[data-titlelabel]', el).textContent = ITEM_LABEL[st.cat] ? 'Description (optional)' : 'What happened?';
+  const sk = sleepKindOn(st);
+  $('[data-sevlabel]', el).textContent = sk ? 'Concern level (optional)' : 'Concern level';
+  $('[data-f="title"]', el).placeholder = sk ? (st.sleepKind === 'bed' ? 'e.g. Settled quickly after a story' : 'e.g. Woke up happy') : (CAT[st.cat] || CAT.other).ph;
+  $('[data-titlelabel]', el).textContent = ITEM_LABEL[st.cat] || sk ? 'Description (optional)' : 'What happened?';
+}
+function nowHHMM() { const n = new Date(); return `${pad(n.getHours())}:${pad(n.getMinutes())}`; }
+function autoSleepKind(el) {
+  const st = el._st;
+  if (st.cat !== 'sleep' || st.kindTouched) return;
+  st.sleepKind = kindForTod($('[data-f="tod"]', el).value);
+  if (st.sleepKind && !st.extra.time && st.mode === 'new') st.extra.time = nowHHMM();
 }
 
 function mountForm(el, entry, mode) {
@@ -401,6 +472,7 @@ function mountForm(el, entry, mode) {
     extra: { temp: e.temp || '', med: e.med || '', dose: e.dose || '', time: e.time || '' },
     results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name || '', value: r.value || '', unit: r.unit || '', low: r.low || '', high: r.high || '' })) : [],
     srcTouched: mode === 'edit', srcAuto: false,
+    sleepKind: e.sleep || '', kindTouched: mode === 'edit' || !!e.kindTouched,
   };
   el._st = st;
   el.innerHTML = formHTML(st, e, mode);
@@ -414,14 +486,19 @@ function mountForm(el, entry, mode) {
       $$('.cat-btn', el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
       if (st.cat === 'bloodtest' && !st.srcTouched && st.src === 'parent') { st.src = 'doctor'; st.srcName = ''; st.srcAuto = true; refreshSourceChips(el); }
       else if (st.cat !== 'bloodtest' && st.srcAuto) { st.src = 'parent'; st.srcName = S.myName || 'Me'; st.srcAuto = false; refreshSourceChips(el); }
+      autoSleepKind(el);
+      renderExtra(el); syncFormBits(el); saveDraft(el);
+    } else if (b.hasAttribute('data-kind')) {
+      st.sleepKind = b.dataset.kind; st.kindTouched = true;
+      if (st.sleepKind && !st.extra.time && st.mode === 'new') st.extra.time = nowHHMM();
       renderExtra(el); syncFormBits(el); saveDraft(el);
     } else if (b.dataset.src) {
       st.src = b.dataset.src; st.srcName = b.dataset.name || ''; st.srcTouched = true; st.srcAuto = false;
       $$('[data-src]', el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
       saveDraft(el);
     } else if (b.dataset.sev) {
-      st.sev = +b.dataset.sev;
-      $$('.sev-btn', el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      st.sev = sleepKindOn(st) && st.sev === +b.dataset.sev ? 0 : +b.dataset.sev;
+      $$('.sev-btn', el).forEach((x) => x.setAttribute('aria-pressed', String(+x.dataset.sev === st.sev)));
       saveDraft(el);
     } else if (b.dataset.act === 'save-entry') {
       await saveForm(el);
@@ -461,6 +538,12 @@ function mountForm(el, entry, mode) {
   el.onchange = (ev) => {
     el.oninput(ev);
     const t = ev.target;
+    if (t.dataset.x === 'time' && t.value) {
+      // Keep "time of day" in step with the exact time entered.
+      const tod = todForTime(t.value); const sel = $('[data-f="tod"]', el);
+      if (tod && sel.value !== tod) { sel.value = tod; if (st.cat === 'sleep' && !st.kindTouched) { autoSleepKind(el); renderExtra(el); syncFormBits(el); } }
+    }
+    if (t.dataset.f === 'tod' && st.cat === 'sleep' && !st.kindTouched) { autoSleepKind(el); renderExtra(el); syncFormBits(el); }
     if (t.dataset.rf === 'name') {
       // A known test name fills in its usual unit and the last normal range used for it.
       const r = st.results[+t.dataset.r]; if (!r || !r.name.trim()) return;
@@ -482,7 +565,7 @@ function saveDraft(el) {
     const d = {
       date: $('[data-f="date"]', el).value, tod: $('[data-f="tod"]', el).value,
       title: $('[data-f="title"]', el).value, notes: $('[data-f="notes"]', el).value,
-      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, savedAt: Date.now(),
+      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, sleep: st.sleepKind, kindTouched: st.kindTouched, savedAt: Date.now(),
     };
     if (d.title || d.notes || d.cat) kvSet('draft', d).catch(() => {}); else kvDel('draft').catch(() => {});
   }, 400);
@@ -513,8 +596,10 @@ async function saveForm(el) {
     results = rows.filter((r) => r.name && r.value);
     if (!results.length) { toast('Add at least one result, with the test name and value'); return; }
   }
-  if (!title && !notes && !hasDetail('med') && !hasDetail('temp') && !results.length) { toast('Add a short description or a note'); $('[data-f="title"]', el).focus(); return; }
-  if (!NO_CONCERN.has(st.cat) && !st.sev) { toast('Choose a concern level'); return; }
+  const sk = sleepKindOn(st);
+  if (sk && !hasDetail('time')) { toast(st.sleepKind === 'bed' ? 'Add the time they went to sleep' : 'Add the time they woke up'); const tf = $('[data-x="time"]', el); if (tf) tf.focus(); return; }
+  if (!title && !notes && !hasDetail('med') && !hasDetail('temp') && !results.length && !sk) { toast('Add a short description or a note'); $('[data-f="title"]', el).focus(); return; }
+  if (!NO_CONCERN.has(st.cat) && !st.sev && !sk) { toast('Choose a concern level'); return; }
   if (!date) { toast('Choose a date'); return; }
   if (date > today()) { toast("The date can't be in the future"); return; }
   const now = Date.now();
@@ -530,6 +615,7 @@ async function saveForm(el) {
     if (keep.includes(f) && v) e[f] = v.slice(0, 60); else delete e[f];
   }
   if (results.length) e.results = results; else delete e.results;
+  if (sk) e.sleep = st.sleepKind; else delete e.sleep;
   if (prev) e.editedBy = S.myName || '';
   S.entries.set(e.id, e);
   try { await putEntries([e]); } catch (err) { toast("Couldn't save on this phone: " + (err.message || err)); return; }
@@ -554,6 +640,7 @@ function repeatEntry(e) {
     src: k, srcName: k === 'parent' ? (S.myName || 'Me') : '', sev: e.sev,
     med: e.med || '', dose: e.dose || '', temp: '', time: hasTime ? `${pad(now.getHours())}:${pad(now.getMinutes())}` : '',
     results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name, unit: r.unit || '', low: r.low || '', high: r.high || '', value: '' })) : [],
+    sleep: e.sleep || '', kindTouched: !!e.sleep,
   };
   closeSheet(); switchTab('log');
   const el = $('#log-form'); mountForm(el, draft, 'new'); saveDraft(el);
@@ -581,16 +668,19 @@ function openEntry(id) {
 }
 
 // ---------------------------------------------------------------- history
-function entryCardHTML(e) {
+function entryCardHTML(e, nightByWake) {
   const c = CAT[e.cat] || CAT.other;
   const k = srcKey(e);
   const when = [e.tod, e.time ? fmtTime(e.time) : ''].filter(Boolean).join(', ');
   const hl = headline(e);
   const extra = [];
+  if (hl.from === 'sleep' && String(e.title || '').trim()) extra.push(esc(e.title));
   if (e.temp && hl.from !== 'temp') extra.push(`Temperature ${esc(fmtTemp(e.temp))}`);
   if ((e.med || e.dose) && hl.from !== 'med') extra.push(`${esc(e.med || ITEM_LABEL[e.cat] || 'Medicine')}${e.dose ? ', ' + esc(e.dose) : ''}`);
   const flagged = Array.isArray(e.results) && e.results.some((r) => /low|high/.test(labFlag(r)));
-  return `<button type="button" class="entry-card" data-id="${esc(e.id)}" data-sev="${e.sev || 1}" data-cat="${esc(e.cat)}"${flagged ? ' data-flagged="1"' : ''}>
+  const night = nightByWake && e.sleep === 'wake' ? nightByWake.get(e.id) : null;
+  if (night) extra.push(`Slept ${fmtDur(night.mins)} from ${fmtTime(night.bed)}${night.wakings ? `, woke ${night.wakings === 1 ? 'once' : night.wakings + ' times'} in the night` : ''}`);
+  return `<button type="button" class="entry-card" data-id="${esc(e.id)}" data-sev="${e.sev || 0}" data-cat="${esc(e.cat)}"${flagged ? ' data-flagged="1"' : ''}>
     <div class="entry-top"><span class="entry-cat"><span aria-hidden="true">${c.em}</span> ${c.label}</span><span class="entry-when">${esc(when)}</span></div>
     <div class="entry-title">${esc(hl.text)}</div>
     ${extra.length ? `<div class="entry-extra">${extra.join(' · ')}</div>` : ''}
@@ -621,10 +711,11 @@ function renderHistory() {
     return;
   }
   const t = today(); const y = addDays(t, -1);
+  const nightByWake = new Map(sleepNights(all).map((n) => [n.wakeId, n]));
   let html = ''; let last = '';
   list.slice(0, S.hist.limit).forEach((e) => {
     if (e.date !== last) { last = e.date; html += `<h3 class="day-head">${e.date === t ? 'Today' : e.date === y ? 'Yesterday' : esc(fmtDayLong(e.date))}</h3>`; }
-    html += entryCardHTML(e);
+    html += entryCardHTML(e, nightByWake);
   });
   if (list.length > S.hist.limit) html += `<button type="button" class="btn ghost more-btn" data-more>Show ${Math.min(60, list.length - S.hist.limit)} more</button>`;
   box.innerHTML = html;
@@ -686,6 +777,18 @@ function findPatterns(list, st) {
     const a = Math.round(100 * school.filter((e) => e.sev >= 2).length / school.length);
     const b = Math.round(100 * home.filter((e) => e.sev >= 2).length / home.length);
     if (Math.abs(a - b) >= 20) P.push({ ic: '🏫', text: `Teacher reports were moderate or high concern **${a}%** of the time, compared with **${b}%** at home.` });
+  }
+  const nights = sleepNights(list);
+  if (nights.length >= 3) {
+    const sm = sleepSummary(nights);
+    P.push({ ic: '😴', text: `Average overnight sleep was **${fmtDur(sm.avg)}** over ${sm.n} nights (asleep around ${fmtTime(sm.bed)}, awake around ${fmtTime(sm.wake)}).` });
+    const lo = (sleepGuide() || SLEEP_GUIDES['3-5']).lo;
+    const short = nights.filter((n) => n.mins < lo);
+    if (short.length >= 3) {
+      const hardDays = new Set(list.filter((e) => (e.cat === 'behaviour' || e.cat === 'emotion') && e.sev >= 2).map((e) => e.date));
+      const k = short.filter((n) => hardDays.has(n.wakeDate)).length;
+      if (k / short.length >= 0.5) P.push({ ic: '🌙', text: `After **${k} of ${short.length}** nights under ${fmtDur(lo)}, a moderate or high behaviour or emotion entry followed the next day.` });
+    }
   }
   const rough = list.filter((e) => e.cat === 'sleep' && e.sev >= 2);
   if (rough.length >= 3) {
@@ -776,6 +879,69 @@ function labChartSVG(s, si) {
   return svg + '</svg>';
 }
 
+function sleepChartSVG(all) {
+  const nights = sleepNights(all); const byDate = new Map(nights.map((n) => [n.date, n]));
+  const slots = []; for (let i = 14; i >= 1; i--) { const d = addDays(today(), -i); slots.push({ d, n: byDate.get(d) }); }
+  if (!slots.some((s) => s.n)) return '';
+  const guide = sleepGuide();
+  const W = 320; const H = 150; const L = 4; const R = 38; const T = 10; const B = 22;
+  const maxM = Math.max(780, ...slots.filter((s) => s.n).map((s) => s.n.mins + 30));
+  const y = (m) => T + (1 - m / maxM) * (H - T - B);
+  const sw = (W - L - R) / slots.length; const bw = Math.min(16, sw * 0.64);
+  const f1 = (n) => n.toFixed(1);
+  let svg = `<svg class="sleep-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Hours slept each night for the last two weeks">`;
+  if (guide) {
+    svg += `<rect class="sleep-band" x="${L}" y="${f1(y(guide.hi))}" width="${W - L - R}" height="${f1(y(guide.lo) - y(guide.hi))}" rx="3"></rect>`;
+    svg += `<text class="lab-axis" x="${W - R + 5}" y="${f1(y(guide.hi) + 3.5)}">${guide.hi / 60} h</text><text class="lab-axis" x="${W - R + 5}" y="${f1(y(guide.lo) + 3.5)}">${guide.lo / 60} h</text>`;
+  } else {
+    [480, 600, 720].forEach((m) => { svg += `<text class="lab-axis" x="${W - R + 5}" y="${f1(y(m) + 3.5)}">${m / 60} h</text>`; });
+  }
+  svg += `<line class="lab-base" x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}"></line>`;
+  const shown = slots.filter((s) => s.n);
+  slots.forEach((s, i) => {
+    const cx = L + i * sw + sw / 2;
+    if (s.n) {
+      const x0 = cx - bw / 2; const top = y(s.n.mins); const base = H - B; const r = Math.min(4, bw / 2, base - top);
+      svg += `<path class="sleep-bar" data-i="${i}" d="M${f1(x0)},${base} V${f1(top + r)} Q${f1(x0)},${f1(top)} ${f1(x0 + r)},${f1(top)} H${f1(x0 + bw - r)} Q${f1(x0 + bw)},${f1(top)} ${f1(x0 + bw)},${f1(top + r)} V${base} Z"><title>${esc(`${fmtDayShort(s.d)}: ${fmtDur(s.n.mins)}`)}</title></path>`;
+      const label = `Night of ${fmtDayShort(s.d)}: ${fmtDur(s.n.mins)}, asleep ${fmtTime(s.n.bed)} to ${fmtTime(s.n.wake)}${s.n.wakings ? `, woke ${s.n.wakings === 1 ? 'once' : s.n.wakings + ' times'}` : ''}`;
+      svg += `<rect class="lab-hit" data-night="${esc(label)}" data-i="${i}" x="${f1(L + i * sw)}" y="${T}" width="${f1(sw)}" height="${H - T - B}"></rect>`;
+    }
+    if (i === 0 || i === 7 || i === slots.length - 1) {
+      const dt = parseYmd(s.d);
+      svg += `<text class="lab-axis" x="${f1(cx)}" y="${H - 7}" text-anchor="middle">${dt.getDate()}/${dt.getMonth() + 1}</text>`;
+    }
+  });
+  if (shown.length >= 2) {
+    const avg = shown.reduce((a, b) => a + b.n.mins, 0) / shown.length;
+    svg += `<line class="sleep-avg" x1="${L}" x2="${W - R}" y1="${f1(y(avg))}" y2="${f1(y(avg))}"><title>${esc(`Average ${fmtDur(avg)}`)}</title></line>`;
+  }
+  return svg + '</svg>';
+}
+
+function sleepCardHTML(all) {
+  const nightsAll = sleepNights(all);
+  if (!nightsAll.length) {
+    if (!all.some((e) => e.cat === 'sleep')) return '';
+    return `<div class="card"><h3 class="card-title">Overnight sleep</h3><p class="hint intro">When you log Sleep in the evening it's saved as the time they went to sleep, and in the morning as the time they woke up. Once a night has both, the hours slept appear here.</p></div>`;
+  }
+  const from = S.insightRange === 'all' ? '' : addDays(today(), -(+S.insightRange - 1));
+  const nights = nightsAll.filter((n) => !from || n.date >= from);
+  const sm = sleepSummary(nights);
+  const wk = (a, b) => nightsAll.filter((n) => n.date >= addDays(today(), -a) && n.date < addDays(today(), -b));
+  const last7 = sleepSummary(wk(7, 0)); const prev7 = sleepSummary(wk(14, 7));
+  let trend = '';
+  if (last7 && prev7) { const d = Math.round(last7.avg - prev7.avg); trend = `Last 7 nights: ${fmtDur(last7.avg)} on average, ${d === 0 ? 'the same as' : `${fmtDur(Math.abs(d))} ${d > 0 ? 'more than' : 'less than'}`} the week before.`; }
+  else if (last7) trend = `Last 7 nights: ${fmtDur(last7.avg)} on average.`;
+  const guide = sleepGuide();
+  const chart = sleepChartSVG(all);
+  return `<div class="card"><h3 class="card-title">Overnight sleep</h3>
+    ${sm ? `<div class="lab-latest"><span class="lab-big">${esc(fmtDur(sm.avg))}</span> average over ${sm.n} night${sm.n > 1 ? 's' : ''}<span class="lab-when">Asleep around ${esc(fmtTime(sm.bed))}, awake around ${esc(fmtTime(sm.wake))}</span></div>` : '<p class="hint">No complete nights in this period.</p>'}
+    ${trend ? `<div class="lab-change">${esc(trend)}</div>` : ''}
+    ${chart ? `${chart}<p class="lab-tip" data-tip="sleep" aria-live="polite"></p><p class="hint">Bars show each of the last 14 nights; tap one for details. The orange line is their average.${guide ? ` The shaded band is the guideline of ${esc(guide.text)}.` : ''}</p>` : ''}
+    ${sm && sm.woke ? `<div class="lab-note">Woke during the night on ${sm.woke} of ${sm.n} nights.</div>` : ''}
+  </div>`;
+}
+
 function labCardHTML(all) {
   const series = labSeries(all); if (!series.length) return '';
   return `<div class="card"><h3 class="card-title">Blood tests</h3><p class="hint intro">Every result logged, newest test first. The shaded band is the normal range from the latest report. Tap a dot to see its value.</p>
@@ -809,8 +975,14 @@ function renderInsights() {
   const all = live();
   const list = S.insightRange === 'all' ? all : rangeFilter(all, addDays(today(), -(+S.insightRange - 1)), today());
   const box = $('#insights');
-  const labs = labCardHTML(all);
+  const labs = sleepCardHTML(all) + labCardHTML(all);
   box.onclick = (ev) => {
+    const sh = ev.target.closest('[data-night]');
+    if (sh) {
+      $('[data-tip="sleep"]', box).textContent = sh.dataset.night;
+      $$('.sleep-bar', box).forEach((c) => c.classList.toggle('sel', c.dataset.i === sh.dataset.i));
+      return;
+    }
     const hit = ev.target.closest('[data-pt]'); if (!hit) return;
     const tip = $(`[data-tip="${hit.dataset.series}"]`, box);
     if (tip) tip.textContent = hit.dataset.pt;
@@ -850,7 +1022,7 @@ function defaultExport() {
   return {
     range: '30', from: addDays(today(), -29), to: today(),
     cats: new Set(CATS.map((c) => c.k)), srcs: new Set(SOURCES.map((s) => s.k)), sevs: new Set([1, 2, 3]),
-    summary: true, notes: true, by: true, labs: true, order: 'date',
+    summary: true, notes: true, by: true, labs: true, sleep: true, order: 'date',
   };
 }
 function exportPeriod() {
@@ -900,6 +1072,7 @@ function renderExport() {
         ${toggle('summary', 'Summary and patterns', 'Counts by area, time of day and who saw it')}
         ${toggle('notes', 'Notes', 'The full notes written for each entry')}
         ${toggle('by', 'Who logged each entry')}
+        ${toggle('sleep', 'Overnight sleep table', 'Bedtime, wake time and hours slept each night')}
         ${toggle('labs', 'Blood test table and charts', 'Each test over time, with its normal range')}
       </div>
     </div>
@@ -962,7 +1135,8 @@ function reportData() {
     areas: describeSet(x.cats, CATS.map((c) => c.k), (k) => CAT[k].label, 'All areas'),
     sources: describeSet(x.srcs, SOURCES.map((s) => s.k), (k) => SRC[k].label, 'Everyone'),
     levels: describeSet(x.sevs, [1, 2, 3], (k) => SEV[k], 'All levels'),
-    opts: { summary: x.summary, notes: x.notes, by: x.by, labs: x.labs, order: x.order },
+    opts: { summary: x.summary, notes: x.notes, by: x.by, labs: x.labs, sleep: x.sleep !== false, order: x.order },
+    guide: sleepGuide(),
     entries: list, stats: computeStats(list), badge: null,
   };
 }
@@ -972,7 +1146,7 @@ async function makePdf(btn) {
   try {
     const { buildPdf } = await import('./pdf.js');
     const data = reportData(); data.badge = concernBadge(data.stats);
-    const { blob, pages } = await buildPdf(data, { CAT, SEV, SRC, srcKey, srcLabel, fmtDayLong, fmtDayShort, fmtTime, fmtTemp, noConcern, ITEM_LABEL, headline, labSeries, labFlag, labRange, labNum, labDomain, FLAG_LABEL });
+    const { blob, pages } = await buildPdf(data, { CAT, SEV, SRC, srcKey, srcLabel, fmtDayLong, fmtDayShort, fmtTime, fmtTemp, noConcern, ITEM_LABEL, headline, labSeries, labFlag, labRange, labNum, labDomain, FLAG_LABEL, sleepNights, sleepSummary, fmtDur });
     S.lastPdf = { blob, pages, name: `little-one-report-${today()}.pdf` };
     renderPdfReady();
     $('#pdf-ready').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -993,11 +1167,19 @@ function reportText() {
     d.stats.patterns.forEach((p) => L.push(`- ${p.text.replace(/\*\*/g, '')}`));
     L.push('');
   }
+  const nights = d.opts.sleep ? sleepNights(d.entries) : [];
+  if (nights.length) {
+    const sm = sleepSummary(nights);
+    L.push(`Overnight sleep: ${fmtDur(sm.avg)} on average over ${sm.n} nights, asleep around ${fmtTime(sm.bed)}, awake around ${fmtTime(sm.wake)}.`);
+    nights.forEach((n) => L.push(`- Night of ${fmtDayShort(n.date)}: ${fmtTime(n.bed)} to ${fmtTime(n.wake)}, ${fmtDur(n.mins)}${n.wakings ? `, woke ${n.wakings}x` : ''}`));
+    L.push('');
+  }
   d.entries.forEach((e) => {
     const c = CAT[e.cat] || CAT.other;
     const meta = [fmtDayShort(e.date), e.tod, e.time ? fmtTime(e.time) : '', c.label, noConcern(e) ? '' : `${SEV[e.sev] || 'Mild'} concern`, `seen by ${srcLabel(e)}`, d.opts.by && e.by && e.by !== srcLabel(e) ? `logged by ${e.by}` : ''].filter(Boolean).join(', ');
     const hl = headline(e, d.opts.notes);
     L.push(hl.text, `  ${meta}`);
+    if (hl.from === 'sleep' && String(e.title || '').trim()) L.push(`  ${e.title}`);
     if (e.temp && hl.from !== 'temp') L.push(`  Temperature: ${fmtTemp(e.temp)}`);
     if ((e.med || e.dose) && hl.from !== 'med') L.push(`  ${ITEM_LABEL[e.cat] || 'Medicine'}: ${[e.med, e.dose].filter(Boolean).join(', ')}`);
     (Array.isArray(e.results) ? e.results : []).forEach((r) => { const f = labFlag(r); L.push(`  ${r.name}: ${r.value} ${r.unit || ''}${labRange(r) ? ` (normal ${labRange(r)})` : ''}${f === 'low' || f === 'high' ? ` ${FLAG_LABEL[f].toUpperCase()}` : ''}`); });
@@ -1069,6 +1251,7 @@ async function mergeRemote(payloads) {
     }
     if (p.profile && (p.profile.updatedAt || 0) > (S.profile.updatedAt || 0)) {
       S.profile = { childName: String(p.profile.childName || ''), updatedAt: p.profile.updatedAt };
+      if (['3-5', '5-13', 'off'].includes(p.profile.sleepGuide)) S.profile.sleepGuide = p.profile.sleepGuide;
       await kvSet('profile', S.profile); changed++;
     }
     if (p.dev && p.dev !== S.deviceId) S.members[p.dev] = { name: String(p.name || '').slice(0, 40), at: p.at || 0 };
@@ -1165,7 +1348,7 @@ function openNewLog(withProfile) {
 async function saveProfileBits(name, child) {
   if (name !== undefined) { S.myName = name.slice(0, 40); await kvSet('myName', S.myName); }
   if (child !== undefined && child !== S.profile.childName) {
-    S.profile = { childName: child.slice(0, 40), updatedAt: Date.now() }; await kvSet('profile', S.profile);
+    S.profile = { ...S.profile, childName: child.slice(0, 40), updatedAt: Date.now() }; await kvSet('profile', S.profile);
   }
 }
 
@@ -1268,6 +1451,11 @@ async function openSettings() {
     <div class="set-section">
       <h3>Your child</h3>
       <div class="field"><label class="label" for="st-child">Name or initials</label><input class="input" id="st-child" maxlength="40" autocomplete="off" value="${esc(S.profile.childName)}"><p class="hint">Shared with your partner's phone.</p></div>
+      <div class="field"><label class="label" for="st-guide">Sleep guideline</label><select class="select" id="st-guide">
+        <option value="3-5"${(S.profile.sleepGuide || '3-5') === '3-5' ? ' selected' : ''}>Ages 3–5: 10–13 hours a day</option>
+        <option value="5-13"${S.profile.sleepGuide === '5-13' ? ' selected' : ''}>Ages 5–13: 9–11 hours a night</option>
+        <option value="off"${S.profile.sleepGuide === 'off' ? ' selected' : ''}>Don't show a guideline</option>
+      </select><p class="hint">From Australia's 24-Hour Movement Guidelines. Shown as a band on the sleep chart. The 3–5 guideline includes naps.</p></div>
     </div>
     <div class="set-section">
       <h3>You</h3>
@@ -1309,6 +1497,7 @@ async function openSettings() {
     full: true,
     onMount: (b) => {
       b.onchange = async (ev) => {
+        if (ev.target.id === 'st-guide') { S.profile = { ...S.profile, sleepGuide: ev.target.value, updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(); toast('Saved'); }
         if (ev.target.id === 'st-child') { await saveProfileBits(undefined, ev.target.value.trim()); renderHeader(); scheduleSync(); toast('Saved'); }
         if (ev.target.id === 'st-name') {
           const lf = $('#log-form'); const old = S.myName;

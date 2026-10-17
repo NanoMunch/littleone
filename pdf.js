@@ -164,9 +164,64 @@ export async function buildPdf(data, h) {
     y += 8;
   }
 
+  // ---------- overnight sleep ----------
+  const nights = data.opts.sleep ? h.sleepNights(data.entries) : [];
+  if (nights.length) {
+    ensure(70);
+    h2('Overnight sleep');
+    const sm = h.sleepSummary(nights);
+    write(`Average ${h.fmtDur(sm.avg)} over ${sm.n} night${sm.n > 1 ? 's' : ''}. Usually asleep around ${h.fmtTime(sm.bed)} and awake around ${h.fmtTime(sm.wake)}. Woke during the night on ${sm.woke} of ${sm.n} nights.`, ML, CW, 'sans', 'normal', 9.5, C.deep, 1.45);
+    if (data.guide) write(`Guideline: ${data.guide.text} (Australia's 24-Hour Movement Guidelines).`, ML, CW, 'serif', 'italic', 9, C.muted, 1.45);
+    y += 3;
+    const shown = nights.slice(-31);
+    if (shown.length >= 3) {
+      const ch = 38; ensure(ch + 6);
+      const cx0 = ML; const cw = CW - 12; const top = y + 2; const bot = y + ch - 7;
+      const maxM = Math.max(780, ...shown.map((n) => n.mins + 30));
+      const py = (m) => top + (1 - m / maxM) * (bot - top);
+      if (data.guide) {
+        doc.setFillColor(234, 243, 235); doc.rect(cx0, py(data.guide.hi), cw, py(data.guide.lo) - py(data.guide.hi), 'F');
+        font('sans', 'normal', 7.5, C.muted);
+        doc.text(`${data.guide.hi / 60} h`, cx0 + cw + 2, py(data.guide.hi), { baseline: 'middle' });
+        doc.text(`${data.guide.lo / 60} h`, cx0 + cw + 2, py(data.guide.lo), { baseline: 'middle' });
+      }
+      doc.setDrawColor(...C.line); doc.setLineWidth(0.2); doc.line(cx0, bot, cx0 + cw, bot);
+      const sw = cw / shown.length; const bw = Math.min(5, sw * 0.64);
+      doc.setFillColor(...C.lav);
+      shown.forEach((n, i) => { const x = cx0 + i * sw + (sw - bw) / 2; doc.rect(x, py(n.mins), bw, bot - py(n.mins), 'F'); });
+      const avgY = py(sm.avg); doc.setDrawColor(...C.terra); doc.setLineWidth(0.4); doc.line(cx0, avgY, cx0 + cw, avgY);
+      font('sans', 'normal', 7.5, C.muted);
+      doc.text(shortDate(shown[0].date), cx0, bot + 2, { baseline: 'top' });
+      doc.text(shortDate(shown[shown.length - 1].date), cx0 + cw, bot + 2, { baseline: 'top', align: 'right' });
+      y += ch + 1;
+      write(`Bars: hours asleep each night. Orange line: average${data.guide ? '. Shaded: guideline' : ''}.`, ML, CW, 'serif', 'italic', 8.5, C.muted, 1.4);
+      y += 3;
+    }
+    if (data.guide) { write(`Nights shorter than ${h.fmtDur(data.guide.lo)} are shown in red.`, ML, CW, 'serif', 'italic', 8.5, C.muted, 1.4); y += 2; }
+    const cols = [ML, ML + 46, ML + 76, ML + 106, ML + 140];
+    ensure(12);
+    font('sans', 'bold', 8, C.muted);
+    ['Night of', 'Asleep', 'Woke', 'Time asleep', 'Night wakings'].forEach((t, i) => doc.text(t, cols[i], y, { baseline: 'top' }));
+    y += 4.6; doc.setDrawColor(...C.line); doc.setLineWidth(0.2); doc.line(ML, y - 0.8, W - MR, y - 0.8);
+    for (const n of nights) {
+      ensure(5.4);
+      font('sans', 'normal', 9, C.deep);
+      doc.text(shortDate(n.date), cols[0], y, { baseline: 'top' });
+      doc.text(h.fmtTime(n.bed), cols[1], y, { baseline: 'top' });
+      doc.text(h.fmtTime(n.wake), cols[2], y, { baseline: 'top' });
+      font('sans', 'bold', 9, data.guide && n.mins < data.guide.lo ? C.alert : C.deep);
+      doc.text(h.fmtDur(n.mins), cols[3], y, { baseline: 'top' });
+      font('sans', 'normal', 9, C.deep);
+      doc.text(n.wakings ? String(n.wakings) : '-', cols[4], y, { baseline: 'top' });
+      y += 5.4;
+    }
+    y += 8;
+  }
+
   // ---------- blood tests ----------
   const series = h.labSeries(data.entries);
   if (data.opts.labs && series.length) {
+    ensure(60);
     h2('Blood test results');
     write('Normal ranges are the ones entered from each report. Results outside them are marked.', ML, CW, 'serif', 'italic', 9, C.muted, 1.45);
     y += 4;
@@ -228,7 +283,7 @@ export async function buildPdf(data, h) {
   // ---------- entries ----------
   h2(`Entries (${data.entries.length})`);
   const flaggedLab = (e) => Array.isArray(e.results) && e.results.some((r) => /low|high/.test(h.labFlag(r)));
-  const sevColor = (e) => (e.cat === 'win' ? C.terra : e.cat === 'bloodtest' ? (flaggedLab(e) ? C.alert : C.sage) : e.cat === 'supplement' ? C.sky : e.sev === 3 ? C.alert : e.sev === 2 ? C.gold : C.sage);
+  const sevColor = (e) => (e.cat === 'win' ? C.terra : e.cat === 'sleep' && !e.sev ? C.lav : e.cat === 'bloodtest' ? (flaggedLab(e) ? C.alert : C.sage) : e.cat === 'supplement' ? C.sky : e.sev === 3 ? C.alert : e.sev === 2 ? C.gold : C.sage);
   const block = (e, showDate, showArea) => {
     const x0 = ML + 4.5; const w = CW - 4.5;
     const cat = h.CAT[e.cat] || h.CAT.other;
@@ -247,6 +302,7 @@ export async function buildPdf(data, h) {
     const parts = [];
     font('sans', 'bold', 10.5, C.deep); parts.push({ L: lines(hl.text, w), fam: 'sans', style: 'bold', size: 10.5, color: C.deep, step: lh(10.5, 1.35), gap: 0.6 });
     font('sans', 'normal', 8.5, C.muted); parts.push({ L: lines(metaBits.join('  ·  '), w), fam: 'sans', style: 'normal', size: 8.5, color: C.muted, step: lh(8.5, 1.45), gap: 0.8 });
+    if (hl.from === 'sleep' && clean(e.title)) extra.unshift(e.title);
     if (extra.length) { font('sans', 'normal', 9, C.deep); parts.push({ L: lines(extra.join('     '), w), fam: 'sans', style: 'normal', size: 9, color: C.deep, step: lh(9, 1.45), gap: 0.6 }); }
     if (Array.isArray(e.results) && e.results.length) {
       font('sans', 'normal', 9, C.deep);

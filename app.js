@@ -1,8 +1,9 @@
 import { getAllEntries, putEntries, kvGet, kvSet, kvDel } from './db.js';
 import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount } from './products.js';
+import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 
-export const APP_VERSION = '1.6.0';
+export const APP_VERSION = '1.7.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -406,12 +407,94 @@ function renderExtra(el) {
       ${k === 'waking' ? `<div class="row2 mt14">${inp('awake', 'Awake for (minutes)', `inputmode="numeric" maxlength="9" placeholder="${QUICK_AWAKE}"`)}</div>` : '<div class="mt10"></div>'}
       ${hint ? `<p class="hint sleep-hint">${hint}</p>` : ''}`;
   }
+  if (ITEM_LABEL[st.cat]) html += '<div data-check></div>';
   box.innerHTML = html; box.hidden = !html;
+  if (ITEM_LABEL[st.cat]) refreshCheck(el);
   // The exact-time field sits above this block; keep it in step with any time set here.
   const mt = $('[data-timelabel] + input', el);
   if (mt && mt.value !== (st.extra.time || '')) mt.value = st.extra.time || '';
   syncTimeBits(el);
 }
+// ---------------------------------------------------------------- supplement check (see nutrients.js)
+const nrvAge = () => (AGE_GROUPS[S.profile.nrvAge] ? S.profile.nrvAge : '4-8');
+const fullContents = (e) => (e.product && PRODUCTS[e.product] ? scaledNutrients(e.product, +e.units || PRODUCTS[e.product].standard, false) : e.contents);
+function checkEntriesFor(date, excludeId) {
+  return live().filter((e) => e.date === date && ITEM_LABEL[e.cat] && e.id !== excludeId).map((e) => ({ ...e, contents: fullContents(e) }));
+}
+function pendingEntries(el) {
+  const st = el._st; if (!ITEM_LABEL[st.cat]) return [];
+  const date = $('[data-f="date"]', el).value || today();
+  const time = String(st.extra.time || '').trim();
+  const base = { date, time, tod: time ? todForTime(time) : $('[data-f="tod"]', el).value, cat: st.cat, _pending: true };
+  const one = (med, dose, contents, product, units) => {
+    if (product && PRODUCTS[product]) {
+      const u = parseFloat(String(units || PRODUCTS[product].standard).replace(',', '.')) || 0;
+      return { ...base, med, product, units: u, dose: productDose(product, u), contents: u > 0 ? scaledNutrients(product, u, false) : [] };
+    }
+    return { ...base, med, dose, contents: (contents || []).filter((c) => c && String(c.name || '').trim()) };
+  };
+  if (st.mode === 'new' && st.batch.length >= 2) return st.batch.map((b) => one(b.med, b.dose, b.contents, b.product, b.units));
+  if (!String(st.extra.med || '').trim() && !st.product) return [];
+  return [one(st.extra.med || PRODUCTS[st.product].name, st.extra.dose, st.contents, st.product, st.units)];
+}
+function dayWord(date) { return date === today() ? 'today' : `on ${fmtDayShort(date)}`; }
+function checkHTML(res, o) {
+  const age = AGE_GROUPS[nrvAge()];
+  const flagged = res.totals.filter((t) => t.level !== 'ok').sort((a, b) => b.pct - a.pct);
+  const pairs = o.pendingOnly ? res.pairs.filter((p) => p.pending) : res.pairs;
+  const lines = [];
+  for (const t of flagged) {
+    lines.push(`<div class="chk ${t.level}"><b>${t.level === 'over' ? '↑ ' : ''}${esc(t.label)}: ${fmtNum(t.total)} ${t.unit}</b> ${t.level === 'over' ? 'is above' : 'is close to'} the upper level of ${fmtNum(t.ul)} ${t.unit} a day for ${age}.
+      <small>${t.parts.map((p) => `${esc(p.src)} ${fmtNum(p.amount)} ${t.unit}${p.detail ? ` (${esc(p.detail)})` : ''}`).join(', ')}</small></div>`);
+  }
+  const seen = new Set();
+  for (const p of pairs) {
+    const k = `${p.type}|${p.a}|${p.b}`; if (seen.has(k)) continue; seen.add(k);
+    if (p.type === 'iron-calcium') lines.push(`<div class="chk near"><b>Iron and calcium close together.</b> ${esc(p.a)} and ${esc(p.b)} are less than 2 hours apart. Calcium, including milk and PediaSure, can reduce how much iron is absorbed, so health services suggest giving iron at least 2 hours apart from them.</div>`);
+    else lines.push(`<div class="chk near"><b>Iron and zinc close together.</b> ${esc(p.a)} and ${esc(p.b)} are less than 2 hours apart. Iron can reduce how much zinc is absorbed when they're given together.</div>`);
+  }
+  if (o.pendingOnly && res.tipIron) lines.push('<div class="chk tip">Tip: iron is absorbed better with vitamin C, such as a little orange juice, and away from milk.</div>');
+  if (!res.totals.length && !lines.length && !res.unknown.length) return '';
+  if (!flagged.length && !pairs.length && res.totals.length) lines.unshift(`<div class="chk ok">✓ Nothing logged ${esc(dayWord(o.date))} is near an upper level for ${age}.</div>`);
+  if (res.unknown.length) lines.push(`<div class="chk muted">Not counted: ${res.unknown.map(esc).join(', ')}. Add the strength under "What's in it" to include ${res.unknown.length > 1 ? 'them' : 'it'}.</div>`);
+  const all = res.totals.length ? `<details class="chk-all"><summary>All nutrients ${esc(dayWord(o.date))}</summary>${res.totals.map((t) => `<div class="nutri-row"><span>${esc(t.label)}</span><b>${fmtNum(t.total)} ${t.unit} <small>of ${fmtNum(t.ul)} (${Math.round(t.pct)}%)</small></b></div>`).join('')}</details>` : '';
+  return `<div class="scheck">${o.title === false ? '' : `<span class="label">Supplement check ${esc(dayWord(o.date))}</span>`}${lines.join('')}${all}
+    <p class="hint">Counts supplements and medicines logged in Little One, not food. Upper levels are from Australia's Nutrient Reference Values for everyday intake (${age}). A doctor may prescribe more on purpose, such as iron for low ferritin, so follow their advice, and ask your GP or pharmacist if you're unsure.</p></div>`;
+}
+function refreshCheck(el) {
+  const box = $('[data-check]', el); if (!box) return;
+  const st = el._st; const date = $('[data-f="date"]', el).value || today();
+  const res = dayCheck([...checkEntriesFor(date, st.id), ...pendingEntries(el)], nrvAge());
+  box.innerHTML = checkHTML(res, { date, pendingOnly: true });
+}
+let checkTimer = null;
+function scheduleCheck(el) { clearTimeout(checkTimer); checkTimer = setTimeout(() => refreshCheck(el), 250); }
+function dayIssues(date) {
+  const res = dayCheck(checkEntriesFor(date, null), nrvAge());
+  return { res, issue: res.totals.some((t) => t.level !== 'ok') || res.pairs.length > 0, over: res.totals.some((t) => t.level === 'over') };
+}
+function suppCheckCardHTML(list) {
+  const dates = Array.from(new Set(list.filter((e) => ITEM_LABEL[e.cat]).map((e) => e.date))).sort().reverse();
+  if (!dates.length) return '';
+  const days = dates.map((d) => ({ d, ...dayIssues(d) }));
+  if (!days.some((x) => x.res.totals.length)) return '';
+  const bad = days.filter((x) => x.issue);
+  const age = AGE_GROUPS[nrvAge()];
+  const summary = (x) => [
+    ...x.res.totals.filter((t) => t.level !== 'ok').map((t) => `${t.label} ${t.level === 'over' ? 'above' : 'close to'} the upper level (${fmtNum(t.total)} ${t.unit})`),
+    ...Array.from(new Set(x.res.pairs.map((p) => (p.type === 'iron-calcium' ? 'iron within 2 hours of calcium' : 'iron within 2 hours of zinc')))),
+  ].join('; ');
+  return `<div class="card"><h3 class="card-title">Supplement check</h3>
+    ${bad.length ? `<p class="hint intro">${bad.length} of ${days.length} day${days.length > 1 ? 's' : ''} with supplements or medicines had something to look at (${age}). Tap a day for details.</p>
+      ${bad.slice(0, 6).map((x) => `<button type="button" class="chk-day" data-check-day="${x.d}"><b>${esc(fmtDayShort(x.d))}</b><span>${esc(summary(x))}</span></button>`).join('')}`
+      : `<div class="chk ok">✓ On the ${days.length} day${days.length > 1 ? 's' : ''} with supplements or medicines in this period, nothing went above or near an upper level for ${age}, and iron wasn't given within 2 hours of calcium or zinc.</div>`}
+    <p class="hint">Counts what's logged in Little One, not food.</p></div>`;
+}
+function openDayCheck(date) {
+  const { res } = dayIssues(date);
+  openSheet(`Supplement check, ${fmtDayShort(date)}`, checkHTML(res, { date, title: false }) || '<p class="hint">Nothing to check for this day.</p>');
+}
+
 // Ready-made products (see products.js): nutrition comes from the label and scales with the amount given.
 function readyHTML() {
   return `<div class="ready"><span class="label">Ready-made</span><div class="chips">${Object.entries(PRODUCTS).map(([k, p]) => `<button type="button" class="chip" data-product="${k}"><span aria-hidden="true">🥛</span> ${esc(p.name)}</button>`).join('')}</div>
@@ -466,7 +549,7 @@ function contentsHTML(st, uid) {
     </div>`).join('');
   return `<div class="contents">
     <span class="label">What's in it (optional)</span>
-    ${rows ? `<div class="content-head" aria-hidden="true"><span>Ingredient</span><span>Strength</span><span></span></div>${rows}<p class="hint content-hint">Strength as printed on the label, per gummy, drop or dose.</p>` : `<p class="hint content-hint">For products with more than one ingredient, like a multivitamin gummy. It's saved with the ${what}, so next time it fills in for you.</p>`}
+    ${rows ? `<div class="content-head" aria-hidden="true"><span>Ingredient</span><span>Strength</span><span></span></div>${rows}<p class="hint content-hint">Strength as printed on the label, per gummy, drop or tablet. For liquids, enter the strength in the amount given.</p>` : `<p class="hint content-hint">For products with more than one ingredient, like a multivitamin gummy. It's saved with the ${what}, so next time it fills in for you.</p>`}
     <button type="button" class="chip" data-act="add-content"><span aria-hidden="true">+</span> Add ${st.contents.length ? 'another' : 'an'} ingredient</button>
   </div>`;
 }
@@ -675,7 +758,7 @@ function mountForm(el, entry, mode) {
       const u = parseFloat(String(st.units).replace(',', '.')) || PRODUCTS[st.product].standard;
       const next = b.dataset.act === 'units-plus' ? Math.min(30, u + 1) : Math.max(0.5, u - 1);
       st.units = fmtAmount(next); const inpU = $('[data-units]', el); if (inpU) inpU.value = st.units;
-      refreshProduct(el); saveDraft(el);
+      refreshProduct(el); scheduleCheck(el); saveDraft(el);
     } else if (b.dataset.act === 'product-off') {
       const u = parseFloat(String(st.units).replace(',', '.')) || 0;
       st.contents = u > 0 ? scaledNutrients(st.product, u, true) : [];
@@ -710,6 +793,7 @@ function mountForm(el, entry, mode) {
     }
     if (t.dataset.cf && t.dataset.c !== undefined) { const c = st.contents[+t.dataset.c]; if (c) c[t.dataset.cf] = t.value; }
     if (t.hasAttribute('data-units')) { st.units = t.value; refreshProduct(el); }
+    if (ITEM_LABEL[st.cat]) scheduleCheck(el);
     if (t.dataset.rf && t.dataset.r !== undefined) {
       const r = st.results[+t.dataset.r];
       if (r) { r[t.dataset.rf] = t.value; const fl = $(`[data-flag="${t.dataset.r}"]`, el); if (fl) fl.innerHTML = flagHTML(labFlag(r)); }
@@ -725,6 +809,7 @@ function mountForm(el, entry, mode) {
       if (tod && sel.value !== tod) { sel.value = tod; if (st.cat === 'sleep' && !st.kindTouched) { autoSleepKind(el); renderExtra(el); syncFormBits(el); } }
     }
     if (t.dataset.f === 'tod' && st.cat === 'sleep' && !st.kindTouched) { autoSleepKind(el); renderExtra(el); syncFormBits(el); }
+    if (t.dataset.f === 'date' && ITEM_LABEL[st.cat]) scheduleCheck(el);
     if (t.dataset.f === 'date' && st.mode === 'new' && !st.timeTouched && t.value && t.value !== today() && st.extra.time) {
       // Logging an earlier day: drop the automatic "now" time so it isn't recorded by mistake.
       st.extra.time = ''; renderExtra(el);
@@ -987,14 +1072,22 @@ function renderHistory() {
   const t = today(); const y = addDays(t, -1);
   const nightByWake = new Map(sleepNights(all).map((n) => [n.wakeId, n]));
   let html = ''; let last = '';
-  list.slice(0, S.hist.limit).forEach((e) => {
-    if (e.date !== last) { last = e.date; html += `<h3 class="day-head">${e.date === t ? 'Today' : e.date === y ? 'Yesterday' : esc(fmtDayLong(e.date))}</h3>`; }
+  const shown = list.slice(0, S.hist.limit);
+  const flagDays = new Map();
+  Array.from(new Set(shown.filter((e) => ITEM_LABEL[e.cat]).map((e) => e.date))).forEach((d) => { const r = dayIssues(d); if (r.issue) flagDays.set(d, r.over); });
+  shown.forEach((e) => {
+    if (e.date !== last) {
+      last = e.date;
+      const flag = flagDays.has(e.date) ? ` <button type="button" class="day-flag${flagDays.get(e.date) ? ' over' : ''}" data-check-day="${e.date}">⚠ Supplement check</button>` : '';
+      html += `<h3 class="day-head">${e.date === t ? 'Today' : e.date === y ? 'Yesterday' : esc(fmtDayLong(e.date))}${flag}</h3>`;
+    }
     html += entryCardHTML(e, nightByWake);
   });
   if (list.length > S.hist.limit) html += `<button type="button" class="btn ghost more-btn" data-more>Show ${Math.min(60, list.length - S.hist.limit)} more</button>`;
   box.innerHTML = html;
   box.onclick = (ev) => {
     if (ev.target.closest('[data-more]')) { S.hist.limit += 60; renderHistory(); return; }
+    const dc = ev.target.closest('[data-check-day]'); if (dc) { openDayCheck(dc.dataset.checkDay); return; }
     const c = ev.target.closest('.entry-card'); if (c) openEntry(c.dataset.id);
   };
 }
@@ -1249,8 +1342,9 @@ function renderInsights() {
   const all = live();
   const list = S.insightRange === 'all' ? all : rangeFilter(all, addDays(today(), -(+S.insightRange - 1)), today());
   const box = $('#insights');
-  const labs = sleepCardHTML(all) + labCardHTML(all);
+  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + labCardHTML(all);
   box.onclick = (ev) => {
+    const cd = ev.target.closest('[data-check-day]'); if (cd) { openDayCheck(cd.dataset.checkDay); return; }
     const sh = ev.target.closest('[data-night]');
     if (sh) {
       $('[data-tip="sleep"]', box).textContent = sh.dataset.night;
@@ -1527,6 +1621,7 @@ async function mergeRemote(payloads) {
     if (p.profile && (p.profile.updatedAt || 0) > (S.profile.updatedAt || 0)) {
       S.profile = { childName: String(p.profile.childName || ''), updatedAt: p.profile.updatedAt };
       if (['3-5', '5-13', 'off'].includes(p.profile.sleepGuide)) S.profile.sleepGuide = p.profile.sleepGuide;
+      if (AGE_GROUPS[p.profile.nrvAge]) S.profile.nrvAge = p.profile.nrvAge;
       await kvSet('profile', S.profile); changed++;
     }
     if (p.dev && p.dev !== S.deviceId) S.members[p.dev] = { name: String(p.name || '').slice(0, 40), at: p.at || 0 };
@@ -1731,6 +1826,9 @@ async function openSettings() {
         <option value="5-13"${S.profile.sleepGuide === '5-13' ? ' selected' : ''}>Ages 5–13: 9–11 hours a night</option>
         <option value="off"${S.profile.sleepGuide === 'off' ? ' selected' : ''}>Don't show a guideline</option>
       </select><p class="hint">From Australia's 24-Hour Movement Guidelines. Shown as a band on the sleep chart. The 3–5 guideline includes naps.</p></div>
+      <div class="field"><label class="label" for="st-nrv">Age group for the supplement check</label><select class="select" id="st-nrv">
+        ${Object.entries(AGE_GROUPS).map(([k, l]) => `<option value="${k}"${nrvAge() === k ? ' selected' : ''}>${l.charAt(0).toUpperCase() + l.slice(1)}</option>`).join('')}
+      </select><p class="hint">Sets which of Australia's upper levels of intake the supplement check uses.</p></div>
     </div>
     <div class="set-section">
       <h3>You</h3>
@@ -1772,6 +1870,7 @@ async function openSettings() {
     full: true,
     onMount: (b) => {
       b.onchange = async (ev) => {
+        if (ev.target.id === 'st-nrv') { S.profile = { ...S.profile, nrvAge: ev.target.value, updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(); toast('Saved'); }
         if (ev.target.id === 'st-guide') { S.profile = { ...S.profile, sleepGuide: ev.target.value, updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(); toast('Saved'); }
         if (ev.target.id === 'st-child') { await saveProfileBits(undefined, ev.target.value.trim()); renderHeader(); scheduleSync(); toast('Saved'); }
         if (ev.target.id === 'st-name') {

@@ -508,3 +508,23 @@ a.btn { text-decoration: none; }
 .batch-amt .input { text-align: center; }
 .batch-amt span { font-size: .8rem; color: var(--muted); }
 .batch .icon-btn { color: var(--muted); }
+
+/* supplement check */
+.scheck { background: var(--card); border: 1.5px solid var(--line); border-radius: 14px; padding: 12px 12px 4px; margin: 4px 0 12px; }
+.scheck .label { margin-bottom: 8px; }
+.chk { border-radius: 10px; padding: 9px 11px; font-size: .86rem; line-height: 1.45; margin-bottom: 8px; }
+.chk small { display: block; font-size: .76rem; margin-top: 3px; }
+.chk.over { background: var(--alert-bg); color: var(--alert); }
+.chk.near { background: var(--gold-bg); color: var(--gold); }
+.chk.ok { background: var(--sage-bg); color: var(--sage); }
+.chk.tip { background: var(--warm); color: var(--ink); }
+.chk.muted { color: var(--muted); padding: 2px 0 6px; }
+.chk-all { margin: 0 0 6px; font-size: .86rem; }
+.chk-all summary { cursor: pointer; color: var(--terracotta-ink); padding: 4px 0 6px; }
+.chk-all .nutri-row small { font-weight: 400; color: var(--muted); }
+.day-flag { margin-left: 8px; border: 0; background: var(--gold-bg); color: var(--gold); border-radius: 999px; padding: 3px 9px; font-family: var(--sans); font-style: normal; font-size: .72rem; font-weight: 600; vertical-align: 1px; }
+.day-flag.over { background: var(--alert-bg); color: var(--alert); }
+.chk-day { display: block; width: 100%; text-align: left; border: 1.5px solid var(--line); background: var(--bg); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; font-size: .86rem; }
+.chk-day b { display: block; font-weight: 600; margin-bottom: 2px; }
+.chk-day span { color: var(--muted); }
+.sheet-body > .scheck { border: 0; padding: 0; background: transparent; }

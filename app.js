@@ -2,7 +2,7 @@ import { getAllEntries, putEntries, kvGet, kvSet, kvDel } from './db.js';
 import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount } from './products.js';
 
-export const APP_VERSION = '1.5.0';
+export const APP_VERSION = '1.6.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -40,6 +40,7 @@ const EXTRA_FIELDS = { sleep: ['time'], health: ['temp', 'time'], medication: ['
 export const NO_CONCERN = new Set(['win', 'supplement', 'bloodtest']);
 export const noConcern = (e) => NO_CONCERN.has(e.cat) || !e.sev;
 export const ITEM_LABEL = { medication: 'Medicine', supplement: 'Supplement' };
+const ITEM_PLURAL = { medication: 'medicines', supplement: 'supplements' };
 
 // ---------------------------------------------------------------- overnight sleep
 // Sleep entries can be marked "went to sleep" (sleep: 'bed') or "woke up" (sleep: 'wake'), each with a time.
@@ -390,6 +391,7 @@ function renderExtra(el) {
   const inp = (f, label, attrs = '') => `<div class="field"><label class="label" for="${uid}-x-${f}">${label}</label><input class="input" id="${uid}-x-${f}" data-x="${f}" value="${esc(x[f] || '')}" autocomplete="off" ${attrs}></div>`;
   let html = '';
   if (st.cat === 'health') html = `<div class="row2">${inp('temp', 'Temperature (°C)', 'inputmode="decimal" placeholder="e.g. 38.2"')}</div>`;
+  else if (ITEM_LABEL[st.cat] && st.mode === 'new' && st.batch.length >= 2) html = `${savedHTML(st)}${batchHTML(st, uid)}`;
   else if (st.cat === 'medication') html = `${savedHTML(st)}${inp('med', 'Medicine', 'placeholder="e.g. Paracetamol"')}${inp('dose', 'Dose', 'placeholder="e.g. 7.5 mL"')}${contentsHTML(st, uid)}`;
   else if (st.cat === 'supplement' && st.product && PRODUCTS[st.product]) html = productFormHTML(st, uid, inp);
   else if (st.cat === 'supplement') html = `${savedHTML(st)}${readyHTML()}${inp('med', 'Supplement', 'placeholder="e.g. Kids multivitamin gummy"')}${inp('dose', 'Amount given', 'placeholder="e.g. 2 gummies"')}${contentsHTML(st, uid)}`;
@@ -490,11 +492,31 @@ function savedHTML(st) {
   const what = ITEM_LABEL[st.cat].toLowerCase();
   if (!items.length) return `<p class="hint saved-empty">Each ${what} you log is remembered here, so next time you can fill it in with one tap.</p>`;
   const cur = itemKey(st.cat, st.extra.med, st.extra.dose);
+  const picked = st.mode === 'new' ? new Set(st.batch.map((b) => b.key)) : null;
   return `<div class="saved${st.editSaved ? ' editing' : ''}">
     <div class="saved-head"><span class="label">Used before</span><button type="button" class="mini" data-act="saved-edit">${st.editSaved ? 'Done' : 'Edit list'}</button></div>
-    <div class="chips">${items.map((i, n) => `<span class="saved-chip"><button type="button" class="chip solid" data-use="${n}" aria-pressed="${cur === i.key}">${esc(i.med)}${i.dose ? ` <span class="n">${esc(i.dose)}</span>` : ''}</button><button type="button" class="forget" data-forget="${n}" aria-label="Remove ${esc(i.med)} from this list">×</button></span>`).join('')}</div>
-    ${st.editSaved ? '<p class="hint">Removing an item only hides it from this list. Past entries stay as they are.</p>' : ''}
+    <div class="chips">${items.map((i, n) => `<span class="saved-chip"><button type="button" class="chip solid" data-use="${n}" aria-pressed="${picked ? picked.has(i.key) : cur === i.key}">${esc(i.med)}${i.dose ? ` <span class="n">${esc(i.dose)}</span>` : ''}</button><button type="button" class="forget" data-forget="${n}" aria-label="Remove ${esc(i.med)} from this list">×</button></span>`).join('')}</div>
+    ${st.editSaved ? '<p class="hint">Removing an item only hides it from this list. Past entries stay as they are.</p>' : st.mode === 'new' ? `<p class="hint saved-tip">Tap one, or several to log them together.</p>` : ''}
   </div>`;
+}
+function batchHTML(st, uid) {
+  const rows = st.batch.map((b, i) => {
+    const p = b.product && PRODUCTS[b.product];
+    const ct = p ? '' : contentsText(b);
+    const amt = p
+      ? `<div class="batch-amt"><input class="input" id="${uid}-b${i}" data-bi="${i}" data-bf="units" inputmode="decimal" maxlength="5" value="${esc(b.units || p.standard)}" aria-label="${esc(p.units)} of ${esc(b.med)}"><span>${esc(p.units)}</span></div>`
+      : `<input class="input" id="${uid}-b${i}" data-bi="${i}" data-bf="dose" maxlength="60" value="${esc(b.dose)}" placeholder="Amount" aria-label="Amount of ${esc(b.med)}">`;
+    return `<div class="batch-row">
+      <div class="batch-name"><b>${esc(b.med)}</b>${ct ? `<small>Contains ${esc(ct)}</small>` : p ? '<small>Nutrition from the label</small>' : ''}</div>
+      ${amt}
+      <button type="button" class="icon-btn" data-bdel="${i}" aria-label="Remove ${esc(b.med)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>`;
+  }).join('');
+  return `<div class="batch"><span class="label">Logging together</span>${rows}
+    <p class="hint">Each is saved as its own entry, with the date, time and notes from this form.</p></div>`;
+}
+function batchItem(item) {
+  return { key: item.key, med: item.med, dose: item.dose, title: item.title || '', contents: (item.contents || []).map((c) => ({ ...c })), product: item.product || '', units: item.units || '' };
 }
 function useSavedItem(el, item) {
   const st = el._st;
@@ -552,6 +574,10 @@ function syncFormBits(el) {
   $('[data-sevlabel]', el).textContent = 'Concern level (optional)';
   $('[data-f="title"]', el).placeholder = sk ? ({ bed: 'e.g. Settled quickly after a story', wake: 'e.g. Woke up happy', waking: 'e.g. Needed a drink of water' }[st.sleepKind]) : (CAT[st.cat] || CAT.other).ph;
   $('[data-titlelabel]', el).textContent = ITEM_LABEL[st.cat] || sk ? 'Description (optional)' : 'What happened?';
+  if (st.mode === 'new') {
+    const n = ITEM_LABEL[st.cat] ? st.batch.length : 0;
+    $('[data-act="save-entry"]', el).textContent = n >= 2 ? `Save ${n} ${ITEM_PLURAL[st.cat]}` : 'Save entry';
+  }
   syncTimeBits(el);
 }
 function nowHHMM() { const n = new Date(); return `${pad(n.getHours())}:${pad(n.getMinutes())}`; }
@@ -576,6 +602,7 @@ function mountForm(el, entry, mode) {
     results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name || '', value: r.value || '', unit: r.unit || '', low: r.low || '', high: r.high || '' })) : [],
     contents: Array.isArray(e.contents) ? e.contents.map((c) => ({ name: c.name || '', amount: c.amount || '' })) : [],
     product: e.product && PRODUCTS[e.product] ? e.product : '', units: e.units != null && e.units !== '' ? String(e.units) : '', productOff: false,
+    batch: mode === 'new' && Array.isArray(e.batch) ? e.batch : [],
     srcTouched: mode === 'edit', srcAuto: false,
     sleepKind: e.sleep || '', kindTouched: mode === 'edit' || !!e.kindTouched,
   };
@@ -587,6 +614,7 @@ function mountForm(el, entry, mode) {
   el.onclick = async (ev) => {
     const b = ev.target.closest('button'); if (!b || !el.contains(b)) return;
     if (b.dataset.cat) {
+      if (st.cat !== b.dataset.cat) st.batch = []; // a selection belongs to one area
       st.cat = b.dataset.cat;
       $$('.cat-btn', el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
       if (st.cat === 'bloodtest' && !st.srcTouched && st.src === 'parent') { st.src = 'doctor'; st.srcName = ''; st.srcAuto = true; refreshSourceChips(el); }
@@ -609,10 +637,27 @@ function mountForm(el, entry, mode) {
     } else if (b.dataset.act === 'save-entry') {
       await saveForm(el);
     } else if (b.dataset.use) {
-      const item = st.savedList && st.savedList[+b.dataset.use]; if (item) useSavedItem(el, item);
+      const item = st.savedList && st.savedList[+b.dataset.use]; if (!item) return;
+      if (st.mode !== 'new') { useSavedItem(el, item); return; }
+      const at = st.batch.findIndex((x) => x.key === item.key);
+      if (at >= 0) st.batch.splice(at, 1);
+      else {
+        if (st.batch.length === 1 && st.extra.med === st.batch[0].med) {
+          // Carry over any change made to the first item before adding a second.
+          const first = st.batch[0]; first.dose = st.extra.dose; first.units = st.units || first.units;
+          if (!first.product) first.contents = st.contents.filter((c) => c.name).map((c) => ({ ...c }));
+        }
+        st.batch.push(batchItem(item));
+      }
+      if (st.batch.length === 1) useSavedItem(el, st.savedList.find((x) => x.key === st.batch[0].key) || st.batch[0]);
+      else {
+        if (!st.batch.length) { st.extra.med = ''; st.extra.dose = ''; st.contents = []; st.product = ''; st.units = ''; }
+        renderExtra(el);
+      }
+      syncFormBits(el); saveDraft(el);
     } else if (b.dataset.forget) {
       const item = st.savedList && st.savedList[+b.dataset.forget];
-      if (item) { S.hiddenItems[item.key] = Date.now(); renderExtra(el); toast(`${item.med} removed from the list`); kvSet('hiddenItems', S.hiddenItems).catch(() => {}); }
+      if (item) { S.hiddenItems[item.key] = Date.now(); st.batch = st.batch.filter((x) => x.key !== item.key); renderExtra(el); syncFormBits(el); toast(`${item.med} removed from the list`); kvSet('hiddenItems', S.hiddenItems).catch(() => {}); }
     } else if (b.hasAttribute('data-radd')) {
       const name = b.dataset.radd;
       const preset = LAB_PRESETS.find((p) => labKey(p.name) === labKey(name));
@@ -621,7 +666,11 @@ function mountForm(el, entry, mode) {
       renderExtra(el); saveDraft(el);
       const f = $(`[data-r="${st.results.length - 1}"][data-rf="${name ? 'value' : 'name'}"]`, el); if (f) f.focus();
     } else if (b.dataset.product) {
-      useProduct(el, b.dataset.product); renderExtra(el); saveDraft(el);
+      st.batch = []; useProduct(el, b.dataset.product); renderExtra(el); syncFormBits(el); saveDraft(el);
+    } else if (b.dataset.bdel !== undefined) {
+      st.batch.splice(+b.dataset.bdel, 1);
+      if (st.batch.length === 1) useSavedItem(el, st.batch[0]); else renderExtra(el);
+      syncFormBits(el); saveDraft(el);
     } else if (b.dataset.act === 'units-minus' || b.dataset.act === 'units-plus') {
       const u = parseFloat(String(st.units).replace(',', '.')) || PRODUCTS[st.product].standard;
       const next = b.dataset.act === 'units-plus' ? Math.min(30, u + 1) : Math.max(0.5, u - 1);
@@ -653,6 +702,7 @@ function mountForm(el, entry, mode) {
   el.oninput = (ev) => {
     const t = ev.target;
     const f = t.dataset.x; if (f) st.extra[f] = t.value;
+    if (t.dataset.bi !== undefined && t.dataset.bf) { const b = st.batch[+t.dataset.bi]; if (b) b[t.dataset.bf] = t.value; }
     if (t.dataset.x === 'time') {
       if (ev.isTrusted !== false) st.timeTouched = true;
       if (t.value) { const tod = todForTime(t.value); if (tod) $('[data-f="tod"]', el).value = tod; }
@@ -704,7 +754,7 @@ function saveDraft(el) {
     const d = {
       date: $('[data-f="date"]', el).value, tod: $('[data-f="tod"]', el).value,
       title: $('[data-f="title"]', el).value, notes: $('[data-f="notes"]', el).value,
-      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, contents: st.contents, product: st.product, units: st.units, timeTouched: st.timeTouched, sleep: st.sleepKind, kindTouched: st.kindTouched, savedAt: Date.now(),
+      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, contents: st.contents, product: st.product, units: st.units, batch: st.batch, timeTouched: st.timeTouched, sleep: st.sleepKind, kindTouched: st.kindTouched, savedAt: Date.now(),
     };
     if (d.title || d.notes || d.cat) kvSet('draft', d).catch(() => {}); else kvDel('draft').catch(() => {});
   }, 400);
@@ -724,6 +774,7 @@ async function saveForm(el) {
   const title = val('title').trim(); const notes = val('notes').trim();
   const date = val('date'); const tod = st.extra.time ? (todForTime(st.extra.time) || val('tod')) : val('tod');
   if (!st.cat) { toast('Choose an area first'); return; }
+  if (st.mode === 'new' && ITEM_LABEL[st.cat] && st.batch.length >= 2) { await saveBatch(el); return; }
   const prodOn = st.cat === 'supplement' && st.product && PRODUCTS[st.product];
   const prodUnits = prodOn ? parseFloat(String(st.units).replace(',', '.')) : 0;
   if (prodOn) {
@@ -777,6 +828,51 @@ async function saveForm(el) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     toast('Entry saved', { label: 'View', fn: () => switchTab('history') });
   }
+}
+
+async function saveBatch(el) {
+  const st = el._st; const val = (f) => $(`[data-f="${f}"]`, el).value;
+  const date = val('date');
+  if (!date) { toast('Choose a date'); return; }
+  if (date > today()) { toast("The date can't be in the future"); return; }
+  const time = String(st.extra.time || '').trim();
+  const tod = time ? (todForTime(time) || val('tod')) : val('tod');
+  const title = val('title').trim(); const notes = val('notes').trim();
+  const now = Date.now(); const list = [];
+  for (const b of st.batch) {
+    const e = {
+      id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId,
+      date, tod, cat: st.cat, src: st.src, srcName: st.src === 'parent' ? st.srcName : '',
+      title: (title || b.title || '').slice(0, 160), notes: notes.slice(0, 8000), sev: NO_CONCERN.has(st.cat) ? 1 : st.sev || 0, med: b.med,
+    };
+    if (time) e.time = time;
+    const p = b.product && PRODUCTS[b.product];
+    if (p) {
+      const u = parseFloat(String(b.units || p.standard).replace(',', '.'));
+      if (!(u > 0)) { toast(`Add how many ${p.units} of ${b.med}`); return; }
+      e.product = b.product; e.units = u; e.dose = productDose(b.product, u); e.contents = scaledNutrients(b.product, u, true);
+    } else {
+      const d = String(b.dose || '').trim(); if (d) e.dose = d.slice(0, 60);
+      const c = (b.contents || []).filter((x) => x && String(x.name || '').trim()).map((x) => ({ name: String(x.name).trim().slice(0, 40), amount: String(x.amount || '').trim().slice(0, 20) }));
+      if (c.length) e.contents = c;
+    }
+    list.push(e);
+  }
+  list.forEach((e) => S.entries.set(e.id, e));
+  try { await putEntries(list); } catch (err) { toast("Couldn't save on this phone: " + (err.message || err)); return; }
+  scheduleSync();
+  clearTimeout(draftTimer); await kvDel('draft').catch(() => {});
+  const word = ITEM_PLURAL[st.cat];
+  mountForm(el, null, 'new');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  renderDependent();
+  toast(`${list.length} ${word} saved`, {
+    label: 'Undo',
+    fn: async () => {
+      const tombs = list.map((e) => ({ id: e.id, deleted: true, updatedAt: Date.now(), by: S.myName || '' }));
+      tombs.forEach((t) => S.entries.set(t.id, t)); await putEntries(tombs); scheduleSync(); renderDependent(); toast(`${list.length} ${word} removed`);
+    },
+  });
 }
 
 async function quickWake(el) {

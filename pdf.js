@@ -177,14 +177,15 @@ export async function buildPdf(data, h) {
       `Seen by ${h.srcLabel(e)}`,
       data.opts.by && e.by && e.by !== h.srcLabel(e) ? `Logged by ${e.by}` : '',
     ].filter(Boolean);
+    const hl = h.headline(e, data.opts.notes);
     const extra = [];
-    if (e.temp) extra.push(`Temperature: ${h.fmtTemp(e.temp)}`);
-    if (e.med || e.dose) extra.push(`${h.ITEM_LABEL[e.cat] || 'Medicine'}: ${[e.med, e.dose].filter(Boolean).join(', ')}`);
+    if (e.temp && hl.from !== 'temp') extra.push(`Temperature: ${h.fmtTemp(e.temp)}`);
+    if ((e.med || e.dose) && hl.from !== 'med') extra.push(`${h.ITEM_LABEL[e.cat] || 'Medicine'}: ${[e.med, e.dose].filter(Boolean).join(', ')}`);
     const parts = [];
-    font('sans', 'bold', 10.5, C.deep); parts.push({ L: lines(e.title, w), fam: 'sans', style: 'bold', size: 10.5, color: C.deep, step: lh(10.5, 1.35), gap: 0.6 });
+    font('sans', 'bold', 10.5, C.deep); parts.push({ L: lines(hl.text, w), fam: 'sans', style: 'bold', size: 10.5, color: C.deep, step: lh(10.5, 1.35), gap: 0.6 });
     font('sans', 'normal', 8.5, C.muted); parts.push({ L: lines(metaBits.join('  ·  '), w), fam: 'sans', style: 'normal', size: 8.5, color: C.muted, step: lh(8.5, 1.45), gap: 0.8 });
     if (extra.length) { font('sans', 'normal', 9, C.deep); parts.push({ L: lines(extra.join('     '), w), fam: 'sans', style: 'normal', size: 9, color: C.deep, step: lh(9, 1.45), gap: 0.6 }); }
-    if (data.opts.notes && clean(e.notes)) {
+    if (data.opts.notes && clean(e.notes) && hl.from !== 'notes-all') {
       font('sans', 'normal', 9.5, C.deep);
       const L = []; clean(e.notes).split('\n').forEach((para) => { if (para.trim()) L.push(...lines(para, w)); else L.push(''); });
       parts.push({ L, fam: 'sans', style: 'normal', size: 9.5, color: C.deep, step: lh(9.5, 1.5), gap: 0, top: 0.8 });

@@ -1,7 +1,7 @@
 import { getAllEntries, putEntries, kvGet, kvSet, kvDel } from './db.js';
 import * as Sync from './sync.js';
 
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.0.1';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -10,8 +10,8 @@ export const CATS = [
   { k: 'sleep', label: 'Sleep', em: '🌙', ph: 'e.g. Woke at 2am, hard to settle' },
   { k: 'eating', label: 'Eating', em: '🍎', ph: 'e.g. Only ate the fruit at lunch' },
   { k: 'health', label: 'Health', em: '🤒', ph: 'e.g. Runny nose and a cough' },
-  { k: 'medication', label: 'Medicine', em: '💊', ph: 'e.g. Paracetamol for a fever' },
-  { k: 'supplement', label: 'Supplement', em: '🫙', ph: 'e.g. Vitamin D drops' },
+  { k: 'medication', label: 'Medicine', em: '💊', ph: 'e.g. For a fever' },
+  { k: 'supplement', label: 'Supplement', em: '🫙', ph: 'e.g. With breakfast' },
   { k: 'appointment', label: 'Appointment', em: '🩺', ph: 'e.g. GP check-up' },
   { k: 'social', label: 'Social', em: '🤝', ph: 'e.g. Played well with a new friend' },
   { k: 'development', label: 'Development', em: '🌱', ph: 'e.g. Wrote their name for the first time' },
@@ -37,7 +37,7 @@ const EXTRA_FIELDS = { health: ['temp', 'time'], medication: ['med', 'dose', 'ti
 // Areas where a concern level doesn't apply (shown without one, and left out of concern counts).
 export const NO_CONCERN = new Set(['win', 'supplement']);
 export const noConcern = (e) => NO_CONCERN.has(e.cat);
-const ITEM_LABEL = { medication: 'Medicine', supplement: 'Supplement' };
+export const ITEM_LABEL = { medication: 'Medicine', supplement: 'Supplement' };
 
 // ---------------------------------------------------------------- helpers
 const $ = (s, r = document) => r.querySelector(s);
@@ -88,6 +88,22 @@ export function srcLabel(e) {
   const k = srcKey(e);
   if (k === 'parent') return e.srcName || e.by || 'Parent';
   return SRC[k].label;
+}
+// What to show as an entry's heading. The description is optional when something else describes
+// the entry (a medicine or supplement, a temperature, or notes).
+export function headline(e, allowNotes = true) {
+  const t = String(e.title || '').trim();
+  if (t) return { text: t, from: 'title' };
+  const med = String(e.med || '').trim();
+  if (med) return { text: [med, String(e.dose || '').trim()].filter(Boolean).join(', '), from: 'med' };
+  if (String(e.temp || '').trim()) return { text: `Temperature ${fmtTemp(e.temp)}`, from: 'temp' };
+  const n = String(e.notes || '').trim();
+  if (n && allowNotes) {
+    const first = n.split('\n')[0].trim();
+    const short = first.length > 70 ? first.slice(0, 68).replace(/\s+\S*$/, '') + '…' : first;
+    return { text: short, from: short === n ? 'notes-all' : 'notes' };
+  }
+  return { text: (CAT[e.cat] || CAT.other).label, from: 'cat' };
 }
 function applySizes(root) {
   $$('[data-w]', root).forEach((el) => { el.style.width = el.dataset.w + '%'; });
@@ -200,7 +216,7 @@ function formHTML(st, e, mode) {
     <span class="label" id="${uid}-srcl">Seen or reported by</span>
     <div class="chips" role="group" aria-labelledby="${uid}-srcl" data-srcs>${sourceChipsHTML(st)}</div>
   </div>
-  <div class="field"><label class="label" for="${uid}-title">What happened?</label><input class="input" id="${uid}-title" data-f="title" maxlength="160" autocomplete="off" enterkeyhint="next" value="${esc(e.title || '')}"></div>
+  <div class="field"><label class="label" for="${uid}-title" data-titlelabel>What happened?</label><input class="input" id="${uid}-title" data-f="title" maxlength="160" autocomplete="off" enterkeyhint="next" value="${esc(e.title || '')}"></div>
   <div class="field"><label class="label" for="${uid}-notes">Notes</label><textarea class="textarea" id="${uid}-notes" data-f="notes" placeholder="What was happening before? How long did it last? What helped?">${esc(e.notes || '')}</textarea></div>
   <div class="field" data-sevwrap>
     <span class="label" id="${uid}-sevl">Concern level</span>
@@ -266,7 +282,7 @@ function useSavedItem(el, item) {
   const now = new Date();
   if (!st.extra.time && st.mode === 'new') st.extra.time = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   const t = $('[data-f="title"]', el);
-  if (!t.value.trim() || t.value === st.autoTitle) { t.value = item.title || item.med; st.autoTitle = t.value; }
+  if (!t.value.trim() || t.value === st.autoTitle) { t.value = item.title || ''; st.autoTitle = t.value; }
   renderExtra(el); saveDraft(el);
 }
 
@@ -274,6 +290,7 @@ function syncFormBits(el) {
   const st = el._st;
   const wrap = $('[data-sevwrap]', el); wrap.hidden = NO_CONCERN.has(st.cat);
   $('[data-f="title"]', el).placeholder = (CAT[st.cat] || CAT.other).ph;
+  $('[data-titlelabel]', el).textContent = ITEM_LABEL[st.cat] ? 'Description (optional)' : 'What happened?';
 }
 
 function mountForm(el, entry, mode) {
@@ -358,9 +375,11 @@ async function saveForm(el) {
   const title = val('title').trim(); const notes = val('notes').trim();
   const date = val('date'); const tod = val('tod');
   if (!st.cat) { toast('Choose an area first'); return; }
-  if (!title) { toast('Add a short description of what happened'); $('[data-f="title"]', el).focus(); return; }
-  if (!NO_CONCERN.has(st.cat) && !st.sev) { toast('Choose a concern level'); return; }
   if (ITEM_LABEL[st.cat] && !String(st.extra.med || '').trim()) { toast(`Add the ${ITEM_LABEL[st.cat].toLowerCase()} name`); const m = $('[data-x="med"]', el); if (m) m.focus(); return; }
+  const keepNow = EXTRA_FIELDS[st.cat] || [];
+  const hasDetail = (f) => keepNow.includes(f) && String(st.extra[f] || '').trim();
+  if (!title && !notes && !hasDetail('med') && !hasDetail('temp')) { toast('Add a short description or a note'); $('[data-f="title"]', el).focus(); return; }
+  if (!NO_CONCERN.has(st.cat) && !st.sev) { toast('Choose a concern level'); return; }
   if (!date) { toast('Choose a date'); return; }
   if (date > today()) { toast("The date can't be in the future"); return; }
   const now = Date.now();
@@ -429,14 +448,15 @@ function entryCardHTML(e) {
   const c = CAT[e.cat] || CAT.other;
   const k = srcKey(e);
   const when = [e.tod, e.time ? fmtTime(e.time) : ''].filter(Boolean).join(', ');
+  const hl = headline(e);
   const extra = [];
-  if (e.temp) extra.push(`Temperature ${esc(fmtTemp(e.temp))}`);
-  if (e.med || e.dose) extra.push(`${esc(e.med || ITEM_LABEL[e.cat] || 'Medicine')}${e.dose ? ', ' + esc(e.dose) : ''}`);
+  if (e.temp && hl.from !== 'temp') extra.push(`Temperature ${esc(fmtTemp(e.temp))}`);
+  if ((e.med || e.dose) && hl.from !== 'med') extra.push(`${esc(e.med || ITEM_LABEL[e.cat] || 'Medicine')}${e.dose ? ', ' + esc(e.dose) : ''}`);
   return `<button type="button" class="entry-card" data-id="${esc(e.id)}" data-sev="${e.sev || 1}" data-cat="${esc(e.cat)}">
     <div class="entry-top"><span class="entry-cat"><span aria-hidden="true">${c.em}</span> ${c.label}</span><span class="entry-when">${esc(when)}</span></div>
-    <div class="entry-title">${esc(e.title)}</div>
+    <div class="entry-title">${esc(hl.text)}</div>
     ${extra.length ? `<div class="entry-extra">${extra.join(' · ')}</div>` : ''}
-    ${e.notes ? `<div class="entry-notes">${esc(e.notes)}</div>` : ''}
+    ${e.notes && hl.from !== 'notes-all' ? `<div class="entry-notes">${esc(e.notes)}</div>` : ''}
     <div class="tags">
       ${noConcern(e) ? '' : `<span class="tag">${SEV[e.sev] || 'Mild'} concern</span>`}
       <span class="tag ${k === 'parent' ? 'src-parent' : 'src-other'}"><span aria-hidden="true">${SRC[k].em}</span> ${esc(srcLabel(e))}</span>
@@ -743,7 +763,7 @@ async function makePdf(btn) {
   try {
     const { buildPdf } = await import('./pdf.js');
     const data = reportData(); data.badge = concernBadge(data.stats);
-    const { blob, pages } = await buildPdf(data, { CAT, SEV, SRC, srcKey, srcLabel, fmtDayLong, fmtDayShort, fmtTime, fmtTemp, noConcern, ITEM_LABEL });
+    const { blob, pages } = await buildPdf(data, { CAT, SEV, SRC, srcKey, srcLabel, fmtDayLong, fmtDayShort, fmtTime, fmtTemp, noConcern, ITEM_LABEL, headline });
     S.lastPdf = { blob, pages, name: `little-one-report-${today()}.pdf` };
     renderPdfReady();
     $('#pdf-ready').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -767,10 +787,11 @@ function reportText() {
   d.entries.forEach((e) => {
     const c = CAT[e.cat] || CAT.other;
     const meta = [fmtDayShort(e.date), e.tod, e.time ? fmtTime(e.time) : '', c.label, noConcern(e) ? '' : `${SEV[e.sev] || 'Mild'} concern`, `seen by ${srcLabel(e)}`, d.opts.by && e.by && e.by !== srcLabel(e) ? `logged by ${e.by}` : ''].filter(Boolean).join(', ');
-    L.push(`${e.title}`, `  ${meta}`);
-    if (e.temp) L.push(`  Temperature: ${fmtTemp(e.temp)}`);
-    if (e.med || e.dose) L.push(`  ${ITEM_LABEL[e.cat] || 'Medicine'}: ${[e.med, e.dose].filter(Boolean).join(', ')}`);
-    if (d.opts.notes && e.notes) L.push(`  Notes: ${e.notes.replace(/\n/g, '\n  ')}`);
+    const hl = headline(e, d.opts.notes);
+    L.push(hl.text, `  ${meta}`);
+    if (e.temp && hl.from !== 'temp') L.push(`  Temperature: ${fmtTemp(e.temp)}`);
+    if ((e.med || e.dose) && hl.from !== 'med') L.push(`  ${ITEM_LABEL[e.cat] || 'Medicine'}: ${[e.med, e.dose].filter(Boolean).join(', ')}`);
+    if (d.opts.notes && e.notes && hl.from !== 'notes-all') L.push(`  Notes: ${e.notes.replace(/\n/g, '\n  ')}`);
     L.push('');
   });
   return L.join('\n');

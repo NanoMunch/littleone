@@ -289,7 +289,7 @@ export async function buildPdf(data, h) {
     const cat = h.CAT[e.cat] || h.CAT.other;
     const metaBits = [
       showDate ? shortDate(e.date) : '',
-      [e.tod, e.time ? h.fmtTime(e.time) : ''].filter(Boolean).join(', '),
+      e.time ? h.fmtTime(e.time) : e.tod,
       showArea ? cat.label : '',
       h.noConcern(e) ? '' : `${h.SEV[e.sev] || 'Mild'} concern`,
       `Seen by ${h.srcLabel(e)}`,

@@ -2,7 +2,7 @@ import { getAllEntries, putEntries, kvGet, kvSet, kvDel } from './db.js';
 import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount } from './products.js';
 
-export const APP_VERSION = '1.4.0';
+export const APP_VERSION = '1.5.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -347,7 +347,11 @@ function formHTML(st, e, mode) {
   return `
   <div class="row2 field">
     <div><label class="label" for="${uid}-date">Date</label><input class="input" type="date" id="${uid}-date" data-f="date" max="${today()}" value="${esc(e.date || today())}"></div>
-    <div><label class="label" for="${uid}-tod">Time of day</label><select class="select" id="${uid}-tod" data-f="tod">${TODS.map((t) => `<option value="${t.k}">${t.em} ${t.k}</option>`).join('')}</select></div>
+    <div><label class="label" for="${uid}-time" data-timelabel>Time</label><input class="input" type="time" id="${uid}-time" data-x="time" value="${esc(st.extra.time || '')}"></div>
+  </div>
+  <div class="field" data-todwrap>
+    <label class="label" for="${uid}-tod">Time of day</label><select class="select" id="${uid}-tod" data-f="tod">${TODS.map((t) => `<option value="${t.k}">${t.em} ${t.k}</option>`).join('')}</select>
+    <p class="hint">No exact time? Choose roughly when it happened, or add the time above.</p>
   </div>
   <div class="field">
     <span class="label" id="${uid}-catl">Area</span>
@@ -385,24 +389,26 @@ function renderExtra(el) {
   const uid = st.mode === 'edit' ? 'ed' : 'lg';
   const inp = (f, label, attrs = '') => `<div class="field"><label class="label" for="${uid}-x-${f}">${label}</label><input class="input" id="${uid}-x-${f}" data-x="${f}" value="${esc(x[f] || '')}" autocomplete="off" ${attrs}></div>`;
   let html = '';
-  if (st.cat === 'health') html = `<div class="row2">${inp('temp', 'Temperature (°C)', 'inputmode="decimal" placeholder="e.g. 38.2"')}${inp('time', 'Time (optional)', 'type="time"')}</div>`;
-  else if (st.cat === 'medication') html = `${savedHTML(st)}${inp('med', 'Medicine', 'placeholder="e.g. Paracetamol"')}<div class="row2">${inp('dose', 'Dose', 'placeholder="e.g. 7.5 mL"')}${inp('time', 'Time given', 'type="time"')}</div>${contentsHTML(st, uid)}`;
+  if (st.cat === 'health') html = `<div class="row2">${inp('temp', 'Temperature (°C)', 'inputmode="decimal" placeholder="e.g. 38.2"')}</div>`;
+  else if (st.cat === 'medication') html = `${savedHTML(st)}${inp('med', 'Medicine', 'placeholder="e.g. Paracetamol"')}${inp('dose', 'Dose', 'placeholder="e.g. 7.5 mL"')}${contentsHTML(st, uid)}`;
   else if (st.cat === 'supplement' && st.product && PRODUCTS[st.product]) html = productFormHTML(st, uid, inp);
-  else if (st.cat === 'supplement') html = `${savedHTML(st)}${readyHTML()}${inp('med', 'Supplement', 'placeholder="e.g. Kids multivitamin gummy"')}<div class="row2">${inp('dose', 'Amount given', 'placeholder="e.g. 2 gummies"')}${inp('time', 'Time given', 'type="time"')}</div>${contentsHTML(st, uid)}`;
-  else if (st.cat === 'appointment') html = inp('time', 'Appointment time (optional)', 'type="time"');
+  else if (st.cat === 'supplement') html = `${savedHTML(st)}${readyHTML()}${inp('med', 'Supplement', 'placeholder="e.g. Kids multivitamin gummy"')}${inp('dose', 'Amount given', 'placeholder="e.g. 2 gummies"')}${contentsHTML(st, uid)}`;
   else if (st.cat === 'bloodtest') html = labFormHTML(st, uid);
   else if (st.cat === 'sleep') {
     const k = st.sleepKind;
     const quick = st.mode === 'new' ? `<button type="button" class="btn dark block quick-wake" data-act="quick-wake"><span aria-hidden="true">🌙</span> Log a night wake-up now</button>
       <p class="hint quick-hint">One tap saves a ${QUICK_AWAKE} minute wake-up at the current time. Tap it in History to change the details.</p>` : '';
-    const timeLabel = { bed: 'Asleep at', wake: 'Woke up at', waking: 'Woke at' }[k] || 'Time (optional)';
     const hint = { bed: "Pairs with the next wake-up to work out the night's sleep.", wake: "Pairs with last night's sleep time to work out how long they slept.", waking: "Time awake is taken off the night's total." }[k];
     html = `${quick}<span class="label">${quick ? 'Or choose what this entry is' : 'This entry is'}</span>
       <div class="chips">${SLEEP_KINDS.map(([v, em, l]) => `<button type="button" class="chip solid" data-kind="${v}" aria-pressed="${k === v}"><span aria-hidden="true">${em}</span>${l}</button>`).join('')}</div>
-      <div class="${k === 'waking' ? 'row2 ' : ''}mt14">${inp('time', timeLabel, 'type="time"')}${k === 'waking' ? inp('awake', 'Awake for (minutes)', `inputmode="numeric" maxlength="9" placeholder="${QUICK_AWAKE}"`) : ''}</div>
+      ${k === 'waking' ? `<div class="row2 mt14">${inp('awake', 'Awake for (minutes)', `inputmode="numeric" maxlength="9" placeholder="${QUICK_AWAKE}"`)}</div>` : '<div class="mt10"></div>'}
       ${hint ? `<p class="hint sleep-hint">${hint}</p>` : ''}`;
   }
   box.innerHTML = html; box.hidden = !html;
+  // The exact-time field sits above this block; keep it in step with any time set here.
+  const mt = $('[data-timelabel] + input', el);
+  if (mt && mt.value !== (st.extra.time || '')) mt.value = st.extra.time || '';
+  syncTimeBits(el);
 }
 // Ready-made products (see products.js): nutrition comes from the label and scales with the amount given.
 function readyHTML() {
@@ -422,7 +428,6 @@ function productFormHTML(st, uid, inp) {
       <div><label class="label" for="${uid}-units">${cap} given</label>
         <div class="stepper"><button type="button" class="step" data-act="units-minus" aria-label="One ${p.unit} less">−</button><input class="input" id="${uid}-units" data-units inputmode="decimal" maxlength="5" value="${esc(st.units)}"><button type="button" class="step" data-act="units-plus" aria-label="One ${p.unit} more">+</button></div>
       </div>
-      ${inp('time', 'Time given', 'type="time"')}
     </div>
     <p class="hint units-hint" data-units-hint>${unitsHint(p, u)}</p>
     <span class="label">Nutrition in this amount</span>
@@ -530,6 +535,15 @@ function labFormHTML(st, uid) {
     <p class="hint">Copy the normal range printed next to each result. Ranges differ between labs and ages, so Little One compares against the range you enter. Next time, it fills in the last range you used.</p>`;
 }
 
+function syncTimeBits(el) {
+  const st = el._st; if (!st) return;
+  const lab = $('[data-timelabel]', el); const wrap = $('[data-todwrap]', el);
+  if (lab) {
+    const sk = st.cat === 'sleep' ? { bed: 'Asleep at', wake: 'Woke up at', waking: 'Woke at' }[st.sleepKind] : '';
+    lab.textContent = sk || (ITEM_LABEL[st.cat] ? 'Time given' : st.cat === 'appointment' ? 'Appointment time' : 'Time');
+  }
+  if (wrap) wrap.hidden = !!st.extra.time;
+}
 function sleepKindOn(st) { return st.cat === 'sleep' && SLEEP_KIND_KEYS.includes(st.sleepKind); }
 function syncFormBits(el) {
   const st = el._st;
@@ -538,6 +552,7 @@ function syncFormBits(el) {
   $('[data-sevlabel]', el).textContent = 'Concern level (optional)';
   $('[data-f="title"]', el).placeholder = sk ? ({ bed: 'e.g. Settled quickly after a story', wake: 'e.g. Woke up happy', waking: 'e.g. Needed a drink of water' }[st.sleepKind]) : (CAT[st.cat] || CAT.other).ph;
   $('[data-titlelabel]', el).textContent = ITEM_LABEL[st.cat] || sk ? 'Description (optional)' : 'What happened?';
+  syncTimeBits(el);
 }
 function nowHHMM() { const n = new Date(); return `${pad(n.getHours())}:${pad(n.getMinutes())}`; }
 function autoSleepKind(el) {
@@ -556,7 +571,8 @@ function mountForm(el, entry, mode) {
     cat: e.cat || '', src: isParent ? 'parent' : e.src,
     srcName: isParent ? (e.srcName || (mode === 'edit' ? e.by : '') || S.myName || 'Me') : '',
     sev: e.sev || 0,
-    extra: { temp: e.temp || '', med: e.med || '', dose: e.dose || '', time: e.time || '', awake: e.awake || '' },
+    extra: { temp: e.temp || '', med: e.med || '', dose: e.dose || '', time: e.time || (mode === 'new' && !('time' in e) ? nowHHMM() : ''), awake: e.awake || '' },
+    timeTouched: mode === 'edit' || !!e.timeTouched,
     results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name || '', value: r.value || '', unit: r.unit || '', low: r.low || '', high: r.high || '' })) : [],
     contents: Array.isArray(e.contents) ? e.contents.map((c) => ({ name: c.name || '', amount: c.amount || '' })) : [],
     product: e.product && PRODUCTS[e.product] ? e.product : '', units: e.units != null && e.units !== '' ? String(e.units) : '', productOff: false,
@@ -565,7 +581,7 @@ function mountForm(el, entry, mode) {
   };
   el._st = st;
   el.innerHTML = formHTML(st, e, mode);
-  $('[data-f="tod"]', el).value = e.tod || currentTod();
+  $('[data-f="tod"]', el).value = st.extra.time ? todForTime(st.extra.time) : e.tod || currentTod();
   renderExtra(el); syncFormBits(el);
 
   el.onclick = async (ev) => {
@@ -637,6 +653,11 @@ function mountForm(el, entry, mode) {
   el.oninput = (ev) => {
     const t = ev.target;
     const f = t.dataset.x; if (f) st.extra[f] = t.value;
+    if (t.dataset.x === 'time') {
+      if (ev.isTrusted !== false) st.timeTouched = true;
+      if (t.value) { const tod = todForTime(t.value); if (tod) $('[data-f="tod"]', el).value = tod; }
+      syncTimeBits(el);
+    }
     if (t.dataset.cf && t.dataset.c !== undefined) { const c = st.contents[+t.dataset.c]; if (c) c[t.dataset.cf] = t.value; }
     if (t.hasAttribute('data-units')) { st.units = t.value; refreshProduct(el); }
     if (t.dataset.rf && t.dataset.r !== undefined) {
@@ -654,6 +675,10 @@ function mountForm(el, entry, mode) {
       if (tod && sel.value !== tod) { sel.value = tod; if (st.cat === 'sleep' && !st.kindTouched) { autoSleepKind(el); renderExtra(el); syncFormBits(el); } }
     }
     if (t.dataset.f === 'tod' && st.cat === 'sleep' && !st.kindTouched) { autoSleepKind(el); renderExtra(el); syncFormBits(el); }
+    if (t.dataset.f === 'date' && st.mode === 'new' && !st.timeTouched && t.value && t.value !== today() && st.extra.time) {
+      // Logging an earlier day: drop the automatic "now" time so it isn't recorded by mistake.
+      st.extra.time = ''; renderExtra(el);
+    }
     if (t.dataset.x === 'med' && st.cat === 'supplement' && !st.product && !st.productOff) {
       // Typing a ready-made product's name switches to its nutrition panel.
       const k = productFor(t.value); if (k) { useProduct(el, k); renderExtra(el); }
@@ -679,7 +704,7 @@ function saveDraft(el) {
     const d = {
       date: $('[data-f="date"]', el).value, tod: $('[data-f="tod"]', el).value,
       title: $('[data-f="title"]', el).value, notes: $('[data-f="notes"]', el).value,
-      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, contents: st.contents, product: st.product, units: st.units, sleep: st.sleepKind, kindTouched: st.kindTouched, savedAt: Date.now(),
+      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, contents: st.contents, product: st.product, units: st.units, timeTouched: st.timeTouched, sleep: st.sleepKind, kindTouched: st.kindTouched, savedAt: Date.now(),
     };
     if (d.title || d.notes || d.cat) kvSet('draft', d).catch(() => {}); else kvDel('draft').catch(() => {});
   }, 400);
@@ -697,7 +722,7 @@ async function saveForm(el) {
   const st = el._st;
   const val = (f) => $(`[data-f="${f}"]`, el).value;
   const title = val('title').trim(); const notes = val('notes').trim();
-  const date = val('date'); const tod = val('tod');
+  const date = val('date'); const tod = st.extra.time ? (todForTime(st.extra.time) || val('tod')) : val('tod');
   if (!st.cat) { toast('Choose an area first'); return; }
   const prodOn = st.cat === 'supplement' && st.product && PRODUCTS[st.product];
   const prodUnits = prodOn ? parseFloat(String(st.units).replace(',', '.')) : 0;
@@ -729,7 +754,7 @@ async function saveForm(el) {
     date, tod, cat: st.cat, src: st.src, srcName: st.src === 'parent' ? st.srcName : '',
     title: title.slice(0, 160), notes: notes.slice(0, 8000), sev: NO_CONCERN.has(st.cat) ? 1 : st.sev || 0, updatedAt: now,
   });
-  const keep = EXTRA_FIELDS[st.cat] || [];
+  const keep = [...(EXTRA_FIELDS[st.cat] || []), 'time'];
   if (sk && st.sleepKind === 'waking') keep.push('awake');
   for (const f of ['temp', 'med', 'dose', 'time', 'awake']) {
     const v = String(st.extra[f] || '').trim();
@@ -781,11 +806,10 @@ function repeatEntry(e) {
   if (!e || e.deleted) return;
   const now = new Date();
   const k = srcKey(e);
-  const hasTime = (EXTRA_FIELDS[e.cat] || []).includes('time');
   const draft = {
     date: today(), tod: currentTod(), cat: e.cat, title: e.title, notes: '',
     src: k, srcName: k === 'parent' ? (S.myName || 'Me') : '', sev: e.sev,
-    med: e.med || '', dose: e.dose || '', temp: '', time: hasTime ? `${pad(now.getHours())}:${pad(now.getMinutes())}` : '',
+    med: e.med || '', dose: e.dose || '', temp: '', time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
     results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name, unit: r.unit || '', low: r.low || '', high: r.high || '', value: '' })) : [],
     sleep: e.sleep || '', kindTouched: !!e.sleep,
     contents: Array.isArray(e.contents) ? e.contents.map((c) => ({ name: c.name, amount: c.amount || '' })) : [],
@@ -820,7 +844,7 @@ function openEntry(id) {
 function entryCardHTML(e, nightByWake) {
   const c = CAT[e.cat] || CAT.other;
   const k = srcKey(e);
-  const when = [e.tod, e.time ? fmtTime(e.time) : ''].filter(Boolean).join(', ');
+  const when = e.time ? fmtTime(e.time) : e.tod || '';
   const hl = headline(e);
   const extra = [];
   if (hl.from === 'sleep' && String(e.title || '').trim()) extra.push(esc(e.title));
@@ -1330,7 +1354,7 @@ function reportText() {
   }
   d.entries.forEach((e) => {
     const c = CAT[e.cat] || CAT.other;
-    const meta = [fmtDayShort(e.date), e.tod, e.time ? fmtTime(e.time) : '', c.label, noConcern(e) ? '' : `${SEV[e.sev] || 'Mild'} concern`, `seen by ${srcLabel(e)}`, d.opts.by && e.by && e.by !== srcLabel(e) ? `logged by ${e.by}` : ''].filter(Boolean).join(', ');
+    const meta = [fmtDayShort(e.date), e.time ? fmtTime(e.time) : e.tod, c.label, noConcern(e) ? '' : `${SEV[e.sev] || 'Mild'} concern`, `seen by ${srcLabel(e)}`, d.opts.by && e.by && e.by !== srcLabel(e) ? `logged by ${e.by}` : ''].filter(Boolean).join(', ');
     const hl = headline(e, d.opts.notes);
     L.push(hl.text, `  ${meta}`);
     if (hl.from === 'sleep' && String(e.title || '').trim()) L.push(`  ${e.title}`);

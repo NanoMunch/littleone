@@ -479,3 +479,17 @@ a.btn { text-decoration: none; }
 .content-row { align-items: center; margin-bottom: 6px; }
 .content-row .icon-btn { color: var(--muted); }
 .content-hint { margin: 2px 0 10px; }
+
+/* ready-made products (nutrition scaled by scoops) */
+.ready { margin-bottom: 14px; }
+.stepper { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; gap: 4px; }
+.stepper .input { text-align: center; padding-left: 4px; padding-right: 4px; font-weight: 600; }
+.step { border: 1.5px solid var(--line); background: var(--card); border-radius: var(--r-sm); font-size: 1.35rem; line-height: 1; min-height: 48px; color: var(--ink); }
+.units-hint { margin: 2px 0 14px; }
+.nutri { display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; background: var(--card); border-radius: 12px; padding: 6px 12px; margin: 0 0 10px; }
+.nutri-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: .84rem; border-bottom: 1px solid var(--line); padding: 6px 0; }
+.nutri-row span { color: var(--muted); }
+.nutri-row b { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nutri-full { background: var(--card); }
+.nutri-full .nutri { grid-template-columns: 1fr; padding: 0 0 8px; }
+@media (max-width: 360px) { .nutri { grid-template-columns: 1fr; } }

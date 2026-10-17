@@ -1,7 +1,8 @@
 import { getAllEntries, putEntries, kvGet, kvSet, kvDel } from './db.js';
 import * as Sync from './sync.js';
+import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount } from './products.js';
 
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.4.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -386,7 +387,8 @@ function renderExtra(el) {
   let html = '';
   if (st.cat === 'health') html = `<div class="row2">${inp('temp', 'Temperature (°C)', 'inputmode="decimal" placeholder="e.g. 38.2"')}${inp('time', 'Time (optional)', 'type="time"')}</div>`;
   else if (st.cat === 'medication') html = `${savedHTML(st)}${inp('med', 'Medicine', 'placeholder="e.g. Paracetamol"')}<div class="row2">${inp('dose', 'Dose', 'placeholder="e.g. 7.5 mL"')}${inp('time', 'Time given', 'type="time"')}</div>${contentsHTML(st, uid)}`;
-  else if (st.cat === 'supplement') html = `${savedHTML(st)}${inp('med', 'Supplement', 'placeholder="e.g. Kids multivitamin gummy"')}<div class="row2">${inp('dose', 'Amount given', 'placeholder="e.g. 2 gummies"')}${inp('time', 'Time given', 'type="time"')}</div>${contentsHTML(st, uid)}`;
+  else if (st.cat === 'supplement' && st.product && PRODUCTS[st.product]) html = productFormHTML(st, uid, inp);
+  else if (st.cat === 'supplement') html = `${savedHTML(st)}${readyHTML()}${inp('med', 'Supplement', 'placeholder="e.g. Kids multivitamin gummy"')}<div class="row2">${inp('dose', 'Amount given', 'placeholder="e.g. 2 gummies"')}${inp('time', 'Time given', 'type="time"')}</div>${contentsHTML(st, uid)}`;
   else if (st.cat === 'appointment') html = inp('time', 'Appointment time (optional)', 'type="time"');
   else if (st.cat === 'bloodtest') html = labFormHTML(st, uid);
   else if (st.cat === 'sleep') {
@@ -402,6 +404,50 @@ function renderExtra(el) {
   }
   box.innerHTML = html; box.hidden = !html;
 }
+// Ready-made products (see products.js): nutrition comes from the label and scales with the amount given.
+function readyHTML() {
+  return `<div class="ready"><span class="label">Ready-made</span><div class="chips">${Object.entries(PRODUCTS).map(([k, p]) => `<button type="button" class="chip" data-product="${k}"><span aria-hidden="true">🥛</span> ${esc(p.name)}</button>`).join('')}</div>
+    <p class="hint">Fills in the nutrition from the label, scaled to the amount given.</p></div>`;
+}
+const nutriRows = (rows) => rows.map((r) => `<div class="nutri-row"><span>${esc(r.name)}</span><b>${esc(r.amount)}</b></div>`).join('');
+function unitsHint(p, u) {
+  return `${esc(p.serveText)}.${u > 0 ? ` ${fmtAmount(u)} ${u === 1 ? p.unit : p.units} makes about ${fmtAmount(u * p.mlPerUnit)} mL.` : ''}`;
+}
+function productFormHTML(st, uid, inp) {
+  const p = PRODUCTS[st.product]; const u = parseFloat(String(st.units).replace(',', '.')) || 0;
+  const cap = p.units.charAt(0).toUpperCase() + p.units.slice(1);
+  return `${savedHTML(st)}
+    ${inp('med', ITEM_LABEL[st.cat], '')}
+    <div class="row2">
+      <div><label class="label" for="${uid}-units">${cap} given</label>
+        <div class="stepper"><button type="button" class="step" data-act="units-minus" aria-label="One ${p.unit} less">−</button><input class="input" id="${uid}-units" data-units inputmode="decimal" maxlength="5" value="${esc(st.units)}"><button type="button" class="step" data-act="units-plus" aria-label="One ${p.unit} more">+</button></div>
+      </div>
+      ${inp('time', 'Time given', 'type="time"')}
+    </div>
+    <p class="hint units-hint" data-units-hint>${unitsHint(p, u)}</p>
+    <span class="label">Nutrition in this amount</span>
+    <div class="nutri" data-nutri>${nutriRows(u > 0 ? scaledNutrients(st.product, u, true) : [])}</div>
+    <details class="howto nutri-full"><summary>Full nutrition panel for this amount</summary><div class="nutri" data-nutri-full>${nutriRows(u > 0 ? scaledNutrients(st.product, u, false) : [])}</div></details>
+    <p class="hint">From ${esc(p.source)}. Recipes can change, so check it against the panel on your tin.</p>
+    <button type="button" class="linkish" data-act="product-off">Enter the ingredients myself instead</button>`;
+}
+function refreshProduct(el) {
+  const st = el._st; const p = PRODUCTS[st.product]; if (!p) return;
+  const u = parseFloat(String(st.units).replace(',', '.')) || 0;
+  if (u > 0) st.extra.dose = productDose(st.product, u);
+  const set = (sel, html) => { const n = $(sel, el); if (n) n.innerHTML = html; };
+  set('[data-nutri]', nutriRows(u > 0 ? scaledNutrients(st.product, u, true) : []));
+  set('[data-nutri-full]', nutriRows(u > 0 ? scaledNutrients(st.product, u, false) : []));
+  set('[data-units-hint]', unitsHint(p, u));
+}
+function useProduct(el, key, units) {
+  const st = el._st; const p = PRODUCTS[key];
+  st.product = key; st.productOff = false; st.units = String(units || p.standard); st.contents = [];
+  if (!String(st.extra.med || '').trim() || productFor(st.extra.med) !== key) st.extra.med = p.name;
+  st.extra.dose = productDose(key, parseFloat(st.units));
+  if (!st.extra.time && st.mode === 'new') st.extra.time = nowHHMM();
+}
+
 // Ingredients in a product (e.g. a multivitamin gummy with vitamin D and iron), each with its strength from the label.
 function contentsHTML(st, uid) {
   const what = ITEM_LABEL[st.cat].toLowerCase();
@@ -427,7 +473,7 @@ function savedItems(cat) {
     const key = itemKey(cat, e.med, e.dose);
     const at = Math.max(e.createdAt || 0, parseYmd(e.date).getTime());
     const cur = map.get(key);
-    if (!cur || at > cur.at) map.set(key, { key, med: e.med.trim(), dose: String(e.dose || '').trim(), title: e.title, contents: Array.isArray(e.contents) ? e.contents : [], at, count: (cur ? cur.count : 0) + 1 });
+    if (!cur || at > cur.at) map.set(key, { key, med: e.med.trim(), dose: String(e.dose || '').trim(), title: e.title, contents: Array.isArray(e.contents) ? e.contents : [], product: e.product || '', units: e.units || '', at, count: (cur ? cur.count : 0) + 1 });
     else cur.count++;
   }
   return Array.from(map.values())
@@ -449,6 +495,7 @@ function useSavedItem(el, item) {
   const st = el._st;
   st.extra.med = item.med; st.extra.dose = item.dose;
   st.contents = (item.contents || []).map((c) => ({ name: c.name || '', amount: c.amount || '' }));
+  if (item.product && PRODUCTS[item.product]) useProduct(el, item.product, item.units); else st.product = '';
   const now = new Date();
   if (!st.extra.time && st.mode === 'new') st.extra.time = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   const t = $('[data-f="title"]', el);
@@ -512,6 +559,7 @@ function mountForm(el, entry, mode) {
     extra: { temp: e.temp || '', med: e.med || '', dose: e.dose || '', time: e.time || '', awake: e.awake || '' },
     results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name || '', value: r.value || '', unit: r.unit || '', low: r.low || '', high: r.high || '' })) : [],
     contents: Array.isArray(e.contents) ? e.contents.map((c) => ({ name: c.name || '', amount: c.amount || '' })) : [],
+    product: e.product && PRODUCTS[e.product] ? e.product : '', units: e.units != null && e.units !== '' ? String(e.units) : '', productOff: false,
     srcTouched: mode === 'edit', srcAuto: false,
     sleepKind: e.sleep || '', kindTouched: mode === 'edit' || !!e.kindTouched,
   };
@@ -556,6 +604,17 @@ function mountForm(el, entry, mode) {
       st.results.push({ name, value: '', unit: (prev && prev.unit) || (preset && preset.unit) || '', low: prev ? prev.low : '', high: prev ? prev.high : '' });
       renderExtra(el); saveDraft(el);
       const f = $(`[data-r="${st.results.length - 1}"][data-rf="${name ? 'value' : 'name'}"]`, el); if (f) f.focus();
+    } else if (b.dataset.product) {
+      useProduct(el, b.dataset.product); renderExtra(el); saveDraft(el);
+    } else if (b.dataset.act === 'units-minus' || b.dataset.act === 'units-plus') {
+      const u = parseFloat(String(st.units).replace(',', '.')) || PRODUCTS[st.product].standard;
+      const next = b.dataset.act === 'units-plus' ? Math.min(30, u + 1) : Math.max(0.5, u - 1);
+      st.units = fmtAmount(next); const inpU = $('[data-units]', el); if (inpU) inpU.value = st.units;
+      refreshProduct(el); saveDraft(el);
+    } else if (b.dataset.act === 'product-off') {
+      const u = parseFloat(String(st.units).replace(',', '.')) || 0;
+      st.contents = u > 0 ? scaledNutrients(st.product, u, true) : [];
+      st.product = ''; st.productOff = true; renderExtra(el); saveDraft(el);
     } else if (b.dataset.act === 'add-content') {
       st.contents.push({ name: '', amount: '' }); renderExtra(el); saveDraft(el);
       const f = $(`[data-c="${st.contents.length - 1}"][data-cf="name"]`, el); if (f) f.focus();
@@ -579,6 +638,7 @@ function mountForm(el, entry, mode) {
     const t = ev.target;
     const f = t.dataset.x; if (f) st.extra[f] = t.value;
     if (t.dataset.cf && t.dataset.c !== undefined) { const c = st.contents[+t.dataset.c]; if (c) c[t.dataset.cf] = t.value; }
+    if (t.hasAttribute('data-units')) { st.units = t.value; refreshProduct(el); }
     if (t.dataset.rf && t.dataset.r !== undefined) {
       const r = st.results[+t.dataset.r];
       if (r) { r[t.dataset.rf] = t.value; const fl = $(`[data-flag="${t.dataset.r}"]`, el); if (fl) fl.innerHTML = flagHTML(labFlag(r)); }
@@ -594,6 +654,10 @@ function mountForm(el, entry, mode) {
       if (tod && sel.value !== tod) { sel.value = tod; if (st.cat === 'sleep' && !st.kindTouched) { autoSleepKind(el); renderExtra(el); syncFormBits(el); } }
     }
     if (t.dataset.f === 'tod' && st.cat === 'sleep' && !st.kindTouched) { autoSleepKind(el); renderExtra(el); syncFormBits(el); }
+    if (t.dataset.x === 'med' && st.cat === 'supplement' && !st.product && !st.productOff) {
+      // Typing a ready-made product's name switches to its nutrition panel.
+      const k = productFor(t.value); if (k) { useProduct(el, k); renderExtra(el); }
+    }
     if (t.dataset.rf === 'name') {
       // A known test name fills in its usual unit and the last normal range used for it.
       const r = st.results[+t.dataset.r]; if (!r || !r.name.trim()) return;
@@ -615,7 +679,7 @@ function saveDraft(el) {
     const d = {
       date: $('[data-f="date"]', el).value, tod: $('[data-f="tod"]', el).value,
       title: $('[data-f="title"]', el).value, notes: $('[data-f="notes"]', el).value,
-      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, contents: st.contents, sleep: st.sleepKind, kindTouched: st.kindTouched, savedAt: Date.now(),
+      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, contents: st.contents, product: st.product, units: st.units, sleep: st.sleepKind, kindTouched: st.kindTouched, savedAt: Date.now(),
     };
     if (d.title || d.notes || d.cat) kvSet('draft', d).catch(() => {}); else kvDel('draft').catch(() => {});
   }, 400);
@@ -635,6 +699,13 @@ async function saveForm(el) {
   const title = val('title').trim(); const notes = val('notes').trim();
   const date = val('date'); const tod = val('tod');
   if (!st.cat) { toast('Choose an area first'); return; }
+  const prodOn = st.cat === 'supplement' && st.product && PRODUCTS[st.product];
+  const prodUnits = prodOn ? parseFloat(String(st.units).replace(',', '.')) : 0;
+  if (prodOn) {
+    if (!(prodUnits > 0)) { toast(`Add how many ${PRODUCTS[st.product].units} were given`); const f = $('[data-units]', el); if (f) f.focus(); return; }
+    st.extra.dose = productDose(st.product, prodUnits);
+    if (!String(st.extra.med || '').trim()) st.extra.med = PRODUCTS[st.product].name;
+  }
   if (ITEM_LABEL[st.cat] && !String(st.extra.med || '').trim()) { toast(`Add the ${ITEM_LABEL[st.cat].toLowerCase()} name`); const m = $('[data-x="med"]', el); if (m) m.focus(); return; }
   const keepNow = EXTRA_FIELDS[st.cat] || [];
   const hasDetail = (f) => keepNow.includes(f) && String(st.extra[f] || '').trim();
@@ -667,6 +738,7 @@ async function saveForm(el) {
   if (results.length) e.results = results; else delete e.results;
   const contents = ITEM_LABEL[st.cat] ? st.contents.map((c) => ({ name: String(c.name || '').trim().slice(0, 40), amount: String(c.amount || '').trim().slice(0, 20) })).filter((c) => c.name) : [];
   if (contents.length) e.contents = contents; else delete e.contents;
+  if (prodOn) { e.product = st.product; e.units = prodUnits; e.contents = scaledNutrients(st.product, prodUnits, true); } else { delete e.product; delete e.units; }
   if (sk) e.sleep = st.sleepKind; else delete e.sleep;
   if (prev) e.editedBy = S.myName || '';
   S.entries.set(e.id, e);
@@ -717,6 +789,7 @@ function repeatEntry(e) {
     results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name, unit: r.unit || '', low: r.low || '', high: r.high || '', value: '' })) : [],
     sleep: e.sleep || '', kindTouched: !!e.sleep,
     contents: Array.isArray(e.contents) ? e.contents.map((c) => ({ name: c.name, amount: c.amount || '' })) : [],
+    product: e.product || '', units: e.units || '',
   };
   closeSheet(); switchTab('log');
   const el = $('#log-form'); mountForm(el, draft, 'new'); saveDraft(el);
@@ -753,7 +826,10 @@ function entryCardHTML(e, nightByWake) {
   if (hl.from === 'sleep' && String(e.title || '').trim()) extra.push(esc(e.title));
   if (e.temp && hl.from !== 'temp') extra.push(`Temperature ${esc(fmtTemp(e.temp))}`);
   if ((e.med || e.dose) && hl.from !== 'med') extra.push(`${esc(e.med || ITEM_LABEL[e.cat] || 'Medicine')}${e.dose ? ', ' + esc(e.dose) : ''}`);
-  if (contentsText(e)) extra.push(`Contains ${esc(contentsText(e))}`);
+  if (contentsText(e)) {
+    const n = e.contents.length; const shown = n > 6 ? contentsText({ contents: e.contents.slice(0, 5) }) + ` and ${n - 5} more` : contentsText(e);
+    extra.push(`Contains ${esc(shown)}`);
+  }
   const flagged = Array.isArray(e.results) && e.results.some((r) => /low|high/.test(labFlag(r)));
   const night = nightByWake && e.sleep === 'wake' ? nightByWake.get(e.id) : null;
   if (night) extra.push(`Slept ${fmtDur(night.mins)} from ${fmtTime(night.bed)}${night.wakings ? `, ${wokeText(night)}` : ''}`);

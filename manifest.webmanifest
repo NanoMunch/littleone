@@ -1,0 +1,17 @@
+{
+  "name": "Little One",
+  "short_name": "Little One",
+  "description": "A private daily log of your child's health and wellbeing, shared between parents.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fdf6ee",
+  "theme_color": "#3d2b1f",
+  "lang": "en-AU",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -3,7 +3,7 @@ import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 
-export const APP_VERSION = '1.7.0';
+export const APP_VERSION = '1.8.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -260,7 +260,7 @@ const S = {
   deviceId: '', myName: '', profile: { childName: '', updatedAt: 0 },
   sync: null, members: {}, lastSyncAt: 0, syncStatus: 'off', syncError: null,
   tab: 'log',
-  hist: { cat: 'all', q: '', limit: 60 },
+  hist: { cat: 'all', q: '', limit: 60, open: new Set(), groups: new Map() },
   insightRange: '30',
   exp: null, lastPdf: null, pdfUrl: null,
   hiddenItems: {},
@@ -1022,7 +1022,98 @@ function openEntry(id) {
 }
 
 // ---------------------------------------------------------------- history
-function entryCardHTML(e, nightByWake) {
+// Supplements or medicines given together (within 15 minutes) and a night's wake-ups show as one line
+// in History, which opens to show each entry.
+const GROUP_MINUTES = 15;
+const hhmmMin = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(t || ''); return m ? +m[1] * 60 + +m[2] : null; };
+function groupKind(e) { return ITEM_LABEL[e.cat] ? e.cat : e.cat === 'sleep' && e.sleep === 'waking' ? 'waking' : ''; }
+// One day's entries (already sorted) -> [{ kind, items }], in the order they appear.
+export function groupDay(list) {
+  const out = []; const open = [];
+  for (const e of list) {
+    const k = groupKind(e); const t = hhmmMin(e.time);
+    let g = null;
+    if (k === 'waking') { const last = out[out.length - 1]; if (last && last.kind === 'waking') g = last; }
+    else if (k) g = open.find((x) => x.kind === k && (t != null && x.t != null ? Math.abs(x.t - t) <= GROUP_MINUTES : t == null && x.t == null && x.tod === e.tod));
+    if (g) { g.items.push(e); continue; }
+    const n = { kind: k, items: [e], t, tod: e.tod };
+    out.push(n); if (k && k !== 'waking') open.push(n);
+  }
+  return out;
+}
+const andList = (a) => (a.length > 1 ? `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}` : a[0] || '');
+function fmtRange(a, b) {
+  const x = fmtTime(a); const y = fmtTime(b);
+  return x.slice(-2) === y.slice(-2) ? `${x.slice(0, -2)}–${y}` : `${x}–${y}`;
+}
+const srcPill = (e) => { const k = srcKey(e); return `<span class="tag ${k === 'parent' ? 'src-parent' : 'src-other'}"><span aria-hidden="true">${SRC[k].em}</span> ${esc(srcLabel(e))}</span>`; };
+const chevron = '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+
+// Earliest first, keeping the order they were picked in when logged together.
+function chrono(list) {
+  return list.map((e, i) => ({ e, i })).sort((a, b) => (hhmmMin(a.e.time) ?? 0) - (hhmmMin(b.e.time) ?? 0) || (a.e.createdAt || 0) - (b.e.createdAt || 0) || a.i - b.i).map((x) => x.e);
+}
+function groupHTML(g, nightByWake) {
+  const items = chrono(g.items);
+  const first = items.reduce((a, e) => (((e.createdAt || 0) < (a.createdAt || 0) || ((e.createdAt || 0) === (a.createdAt || 0) && e.id < a.id)) ? e : a));
+  const gid = first.id; const isOpen = S.hist.open.has(gid);
+  S.hist.groups.set(gid, items);
+  const c = CAT[items[0].cat] || CAT.other;
+  const waking = g.kind === 'waking';
+  const times = items.map((e) => e.time).filter(Boolean).sort();
+  const when = times.length ? (times[0] === times[times.length - 1] ? fmtTime(times[0]) : fmtRange(times[0], times[times.length - 1])) : items[0].tod || '';
+  const srcs = new Set(items.map((e) => `${srcKey(e)}|${srcLabel(e)}`));
+  const oneSrc = srcs.size === 1;
+  let label; let title;
+  if (waking) {
+    label = `${items.length} night wake-ups`;
+    title = times.length === items.length ? `Woke at ${andList(times.map(fmtTime))}` : `Woke ${items.length} times in the night`;
+  } else {
+    label = `${items.length} ${ITEM_PLURAL[g.kind]}`;
+    const names = [];
+    items.forEach((e) => {
+      const n = String(e.med || '').trim() || headline(e, false).text;
+      const at = names.find((x) => x.n.toLowerCase() === n.toLowerCase());
+      if (at) at.k++; else names.push({ n, k: 1 });
+    });
+    title = andList(names.map((x) => (x.k > 1 ? `${x.n} ×${x.k}` : x.n)));
+  }
+  const sev = Math.max(...items.map((e) => (noConcern(e) ? 0 : e.sev || 0)));
+  const canRepeat = !waking && items.some((e) => String(e.med || '').trim());
+  return `<div class="entry-group${isOpen ? ' open' : ''}" data-cat="${esc(items[0].cat)}" data-sev="${sev}" data-kind="${esc(g.kind)}">
+    <button type="button" class="grp-head" data-group="${esc(gid)}" aria-expanded="${isOpen}" aria-controls="grp-${esc(gid)}">
+      <div class="entry-top"><span class="entry-cat"><span aria-hidden="true">${c.em}</span> ${esc(label)}</span>${oneSrc ? srcPill(items[0]) : ''}<span class="entry-when">${esc(when)}</span>${chevron}</div>
+      <div class="entry-title">${esc(title)}</div>
+    </button>
+    <div class="group-body" id="grp-${esc(gid)}"${isOpen ? '' : ' hidden'}>
+      ${items.map((e) => entryCardHTML(e, nightByWake, { when, oneSrc })).join('')}
+      ${canRepeat ? `<div class="group-foot"><button type="button" class="mini" data-repeat-group="${esc(gid)}">Log these again</button></div>` : ''}
+    </div>
+  </div>`;
+}
+
+// Fill the Log form with every supplement or medicine in a group, ready to save together.
+function repeatGroup(list) {
+  const items = []; const seen = new Set();
+  for (const e of list) {
+    const med = String(e.med || '').trim(); if (!med) continue;
+    const key = itemKey(e.cat, med, e.dose);
+    if (seen.has(key)) continue; seen.add(key);
+    items.push(batchItem({ key, med, dose: String(e.dose || '').trim(), title: e.title || '', contents: Array.isArray(e.contents) ? e.contents : [], product: e.product || '', units: e.units || '' }));
+  }
+  if (items.length < 2) { repeatEntry(list.find((e) => String(e.med || '').trim()) || list[0]); return; }
+  const cat = list[0].cat; const k = srcKey(list[0]);
+  const draft = {
+    date: today(), tod: currentTod(), time: nowHHMM(), cat, title: '', notes: '', sev: 0,
+    src: k, srcName: k === 'parent' ? (S.myName || 'Me') : '', med: '', dose: '', contents: [], product: '', units: '', batch: items,
+  };
+  switchTab('log');
+  const el = $('#log-form'); mountForm(el, draft, 'new'); saveDraft(el);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  toast(`Filled in ${items.length} ${ITEM_PLURAL[cat]}. Check the amounts, then tap Save.`);
+}
+
+function entryCardHTML(e, nightByWake, grp) {
   const c = CAT[e.cat] || CAT.other;
   const k = srcKey(e);
   const when = e.time ? fmtTime(e.time) : e.tod || '';
@@ -1039,17 +1130,22 @@ function entryCardHTML(e, nightByWake) {
   const night = nightByWake && e.sleep === 'wake' ? nightByWake.get(e.id) : null;
   if (night) extra.push(`Slept ${fmtDur(night.mins)} from ${fmtTime(night.bed)}${night.wakings ? `, ${wokeText(night)}` : ''}`);
   if (e.cat === 'sleep' && e.sleep === 'waking' && e.awake) extra.push(`Awake ${esc(e.awake)} min`);
-  return `<button type="button" class="entry-card" data-id="${esc(e.id)}" data-sev="${e.sev || 0}" data-cat="${esc(e.cat)}"${flagged ? ' data-flagged="1"' : ''}>
-    <div class="entry-top"><span class="entry-cat"><span aria-hidden="true">${c.em}</span> ${c.label}</span><span class="entry-when">${esc(when)}</span></div>
-    <div class="entry-title">${esc(hl.text)}</div>
+  const tags = [];
+  if (!noConcern(e)) tags.push(`<span class="tag">${SEV[e.sev] || 'Mild'} concern</span>`);
+  if (grp && !grp.oneSrc) tags.push(srcPill(e));
+  if (e.by && !(k === 'parent' && (e.srcName || e.by) === e.by)) tags.push(`<span class="tag">Logged by ${esc(e.by)}</span>`);
+  // Inside a group the area, time and who are on the group's line; an entry shows its own time only when it differs.
+  const ownWhen = grp && when !== grp.when && !(hl.from === 'sleep' && e.time) ? `<span class="entry-when">${esc(when)}</span>` : '';
+  const top = grp
+    ? `<div class="sub-head"><span class="entry-title">${esc(hl.text)}</span>${ownWhen}</div>`
+    : `<div class="entry-top"><span class="entry-cat"><span aria-hidden="true">${c.em}</span> ${c.label}</span>${srcPill(e)}<span class="entry-when">${esc(when)}</span></div>
+    <div class="entry-title">${esc(hl.text)}</div>`;
+  return `<button type="button" class="entry-card${grp ? ' sub' : ''}" data-id="${esc(e.id)}" data-sev="${e.sev || 0}" data-cat="${esc(e.cat)}"${flagged ? ' data-flagged="1"' : ''}>
+    ${top}
     ${extra.length ? `<div class="entry-extra">${extra.join(' · ')}</div>` : ''}
     ${Array.isArray(e.results) && e.results.length ? `<div class="lab-results">${e.results.map((r) => `<div class="lab-res"><span class="lab-res-name">${esc(r.name)}</span><span class="lab-res-val">${esc(r.value)} ${esc(r.unit || '')}</span>${flagHTML(labFlag(r))}</div>`).join('')}</div>` : ''}
     ${e.notes && hl.from !== 'notes-all' ? `<div class="entry-notes">${esc(e.notes)}</div>` : ''}
-    <div class="tags">
-      ${noConcern(e) ? '' : `<span class="tag">${SEV[e.sev] || 'Mild'} concern</span>`}
-      <span class="tag ${k === 'parent' ? 'src-parent' : 'src-other'}"><span aria-hidden="true">${SRC[k].em}</span> ${esc(srcLabel(e))}</span>
-      ${e.by && !(k === 'parent' && (e.srcName || e.by) === e.by) ? `<span class="tag">Logged by ${esc(e.by)}</span>` : ''}
-    </div>
+    ${tags.length ? `<div class="tags">${tags.join('')}</div>` : ''}
   </button>`;
 }
 
@@ -1075,19 +1171,30 @@ function renderHistory() {
   const shown = list.slice(0, S.hist.limit);
   const flagDays = new Map();
   Array.from(new Set(shown.filter((e) => ITEM_LABEL[e.cat]).map((e) => e.date))).forEach((d) => { const r = dayIssues(d); if (r.issue) flagDays.set(d, r.over); });
-  shown.forEach((e) => {
-    if (e.date !== last) {
-      last = e.date;
-      const flag = flagDays.has(e.date) ? ` <button type="button" class="day-flag${flagDays.get(e.date) ? ' over' : ''}" data-check-day="${e.date}">⚠ Supplement check</button>` : '';
-      html += `<h3 class="day-head">${e.date === t ? 'Today' : e.date === y ? 'Yesterday' : esc(fmtDayLong(e.date))}${flag}</h3>`;
-    }
-    html += entryCardHTML(e, nightByWake);
+  const days = [];
+  shown.forEach((e) => { if (e.date !== last) { last = e.date; days.push({ date: e.date, list: [] }); } days[days.length - 1].list.push(e); });
+  S.hist.groups = new Map();
+  days.forEach(({ date, list: dayList }) => {
+    const flag = flagDays.has(date) ? ` <button type="button" class="day-flag${flagDays.get(date) ? ' over' : ''}" data-check-day="${date}">⚠ Supplement check</button>` : '';
+    html += `<h3 class="day-head">${date === t ? 'Today' : date === y ? 'Yesterday' : esc(fmtDayLong(date))}${flag}</h3>`;
+    groupDay(dayList).forEach((g) => { html += g.items.length > 1 ? groupHTML(g, nightByWake) : entryCardHTML(g.items[0], nightByWake); });
   });
   if (list.length > S.hist.limit) html += `<button type="button" class="btn ghost more-btn" data-more>Show ${Math.min(60, list.length - S.hist.limit)} more</button>`;
   box.innerHTML = html;
   box.onclick = (ev) => {
     if (ev.target.closest('[data-more]')) { S.hist.limit += 60; renderHistory(); return; }
     const dc = ev.target.closest('[data-check-day]'); if (dc) { openDayCheck(dc.dataset.checkDay); return; }
+    const gh = ev.target.closest('[data-group]');
+    if (gh) {
+      const id = gh.dataset.group; const open = !S.hist.open.has(id);
+      if (open) S.hist.open.add(id); else S.hist.open.delete(id);
+      gh.setAttribute('aria-expanded', String(open));
+      gh.parentElement.classList.toggle('open', open);
+      const body = document.getElementById(`grp-${id}`); if (body) body.hidden = !open;
+      return;
+    }
+    const rg = ev.target.closest('[data-repeat-group]');
+    if (rg) { const items = S.hist.groups.get(rg.dataset.repeatGroup); if (items) repeatGroup(items); return; }
     const c = ev.target.closest('.entry-card'); if (c) openEntry(c.dataset.id);
   };
 }

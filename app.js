@@ -1,9 +1,9 @@
 import { getAllEntries, putEntries, kvGet, kvSet, kvDel } from './db.js';
 import * as Sync from './sync.js';
-import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount } from './products.js';
+import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standardUnits } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 
-export const APP_VERSION = '1.8.0';
+export const APP_VERSION = '1.8.1';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -417,7 +417,8 @@ function renderExtra(el) {
 }
 // ---------------------------------------------------------------- supplement check (see nutrients.js)
 const nrvAge = () => (AGE_GROUPS[S.profile.nrvAge] ? S.profile.nrvAge : '4-8');
-const fullContents = (e) => (e.product && PRODUCTS[e.product] ? scaledNutrients(e.product, +e.units || PRODUCTS[e.product].standard, false) : e.contents);
+const stdUnits = (key) => standardUnits(key, nrvAge());
+const fullContents = (e) => (e.product && PRODUCTS[e.product] ? scaledNutrients(e.product, +e.units || stdUnits(e.product), false) : e.contents);
 function checkEntriesFor(date, excludeId) {
   return live().filter((e) => e.date === date && ITEM_LABEL[e.cat] && e.id !== excludeId).map((e) => ({ ...e, contents: fullContents(e) }));
 }
@@ -428,7 +429,7 @@ function pendingEntries(el) {
   const base = { date, time, tod: time ? todForTime(time) : $('[data-f="tod"]', el).value, cat: st.cat, _pending: true };
   const one = (med, dose, contents, product, units) => {
     if (product && PRODUCTS[product]) {
-      const u = parseFloat(String(units || PRODUCTS[product].standard).replace(',', '.')) || 0;
+      const u = parseFloat(String(units || stdUnits(product)).replace(',', '.')) || 0;
       return { ...base, med, product, units: u, dose: productDose(product, u), contents: u > 0 ? scaledNutrients(product, u, false) : [] };
     }
     return { ...base, med, dose, contents: (contents || []).filter((c) => c && String(c.name || '').trim()) };
@@ -496,18 +497,18 @@ function openDayCheck(date) {
 }
 
 // Ready-made products (see products.js): nutrition comes from the label and scales with the amount given.
-function readyHTML() {
-  return `<div class="ready"><span class="label">Ready-made</span><div class="chips">${Object.entries(PRODUCTS).map(([k, p]) => `<button type="button" class="chip" data-product="${k}"><span aria-hidden="true">🥛</span> ${esc(p.name)}</button>`).join('')}</div>
-    <p class="hint">Fills in the nutrition from the label, scaled to the amount given.</p></div>`;
+function readyHTML(cur) {
+  return `<div class="ready"><span class="label">Ready-made</span><div class="chips">${Object.entries(PRODUCTS).map(([k, p]) => `<button type="button" class="chip${cur ? ' solid' : ''}" data-product="${k}"${cur ? ` aria-pressed="${k === cur}"` : ''}><span aria-hidden="true">${p.em || '🥛'}</span> ${esc(p.name)}</button>`).join('')}</div>
+    ${cur ? '' : '<p class="hint">Fills in the nutrition from the label, scaled to the amount given.</p>'}</div>`;
 }
 const nutriRows = (rows) => rows.map((r) => `<div class="nutri-row"><span>${esc(r.name)}</span><b>${esc(r.amount)}</b></div>`).join('');
 function unitsHint(p, u) {
-  return `${esc(p.serveText)}.${u > 0 ? ` ${fmtAmount(u)} ${u === 1 ? p.unit : p.units} makes about ${fmtAmount(u * p.mlPerUnit)} mL.` : ''}`;
+  return `${esc(p.serveText)}.${u > 0 && p.mlPerUnit ? ` ${fmtAmount(u)} ${u === 1 ? p.unit : p.units} makes about ${fmtAmount(u * p.mlPerUnit)} mL.` : ''}`;
 }
 function productFormHTML(st, uid, inp) {
   const p = PRODUCTS[st.product]; const u = parseFloat(String(st.units).replace(',', '.')) || 0;
   const cap = p.units.charAt(0).toUpperCase() + p.units.slice(1);
-  return `${savedHTML(st)}
+  return `${savedHTML(st)}${Object.keys(PRODUCTS).length > 1 ? readyHTML(st.product) : ''}
     ${inp('med', ITEM_LABEL[st.cat], '')}
     <div class="row2">
       <div><label class="label" for="${uid}-units">${cap} given</label>
@@ -518,7 +519,7 @@ function productFormHTML(st, uid, inp) {
     <span class="label">Nutrition in this amount</span>
     <div class="nutri" data-nutri>${nutriRows(u > 0 ? scaledNutrients(st.product, u, true) : [])}</div>
     <details class="howto nutri-full"><summary>Full nutrition panel for this amount</summary><div class="nutri" data-nutri-full>${nutriRows(u > 0 ? scaledNutrients(st.product, u, false) : [])}</div></details>
-    <p class="hint">From ${esc(p.source)}. Recipes can change, so check it against the panel on your tin.</p>
+    <p class="hint">From ${esc(p.source)}. ${esc(p.check || 'Check it against the label.')}</p>
     <button type="button" class="linkish" data-act="product-off">Enter the ingredients myself instead</button>`;
 }
 function refreshProduct(el) {
@@ -532,7 +533,7 @@ function refreshProduct(el) {
 }
 function useProduct(el, key, units) {
   const st = el._st; const p = PRODUCTS[key];
-  st.product = key; st.productOff = false; st.units = String(units || p.standard); st.contents = [];
+  st.product = key; st.productOff = false; st.units = String(units || stdUnits(key)); st.contents = [];
   if (!String(st.extra.med || '').trim() || productFor(st.extra.med) !== key) st.extra.med = p.name;
   st.extra.dose = productDose(key, parseFloat(st.units));
   if (!st.extra.time && st.mode === 'new') st.extra.time = nowHHMM();
@@ -587,7 +588,7 @@ function batchHTML(st, uid) {
     const p = b.product && PRODUCTS[b.product];
     const ct = p ? '' : contentsText(b);
     const amt = p
-      ? `<div class="batch-amt"><input class="input" id="${uid}-b${i}" data-bi="${i}" data-bf="units" inputmode="decimal" maxlength="5" value="${esc(b.units || p.standard)}" aria-label="${esc(p.units)} of ${esc(b.med)}"><span>${esc(p.units)}</span></div>`
+      ? `<div class="batch-amt"><input class="input" id="${uid}-b${i}" data-bi="${i}" data-bf="units" inputmode="decimal" maxlength="5" value="${esc(b.units || stdUnits(b.product))}" aria-label="${esc(p.units)} of ${esc(b.med)}"><span>${esc(p.units)}</span></div>`
       : `<input class="input" id="${uid}-b${i}" data-bi="${i}" data-bf="dose" maxlength="60" value="${esc(b.dose)}" placeholder="Amount" aria-label="Amount of ${esc(b.med)}">`;
     return `<div class="batch-row">
       <div class="batch-name"><b>${esc(b.med)}</b>${ct ? `<small>Contains ${esc(ct)}</small>` : p ? '<small>Nutrition from the label</small>' : ''}</div>
@@ -755,8 +756,8 @@ function mountForm(el, entry, mode) {
       if (st.batch.length === 1) useSavedItem(el, st.batch[0]); else renderExtra(el);
       syncFormBits(el); saveDraft(el);
     } else if (b.dataset.act === 'units-minus' || b.dataset.act === 'units-plus') {
-      const u = parseFloat(String(st.units).replace(',', '.')) || PRODUCTS[st.product].standard;
-      const next = b.dataset.act === 'units-plus' ? Math.min(30, u + 1) : Math.max(0.5, u - 1);
+      const u = parseFloat(String(st.units).replace(',', '.')) || stdUnits(st.product);
+      const next = b.dataset.act === 'units-plus' ? Math.min(30, u + 1) : Math.max(PRODUCTS[st.product].minUnits || 0.5, u - 1);
       st.units = fmtAmount(next); const inpU = $('[data-units]', el); if (inpU) inpU.value = st.units;
       refreshProduct(el); scheduleCheck(el); saveDraft(el);
     } else if (b.dataset.act === 'product-off') {
@@ -933,7 +934,7 @@ async function saveBatch(el) {
     if (time) e.time = time;
     const p = b.product && PRODUCTS[b.product];
     if (p) {
-      const u = parseFloat(String(b.units || p.standard).replace(',', '.'));
+      const u = parseFloat(String(b.units || stdUnits(b.product)).replace(',', '.'));
       if (!(u > 0)) { toast(`Add how many ${p.units} of ${b.med}`); return; }
       e.product = b.product; e.units = u; e.dose = productDose(b.product, u); e.contents = scaledNutrients(b.product, u, true);
     } else {

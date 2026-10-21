@@ -1,5 +1,5 @@
 {
-  "version": "1.8.0",
+  "version": "1.8.1",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -48,6 +48,10 @@
     {
       "date": "2026-10-19",
       "notes": "1.8.0 Shorter History: supplements or medicines given within 15 minutes of each other, and a night's wake-ups, show as one line that opens to show each entry, with \"Log these again\". Who logged an entry moves onto its top line, so most cards are a line shorter; notes show three lines."
+    },
+    {
+      "date": "2026-10-21",
+      "notes": "1.8.1 Nature's Way Kids Smart Vita Gummies Multi-Vitamin for Fussy Eaters added as a ready-made supplement: ingredients per gummy from the label, counted in gummies, defaulting to the label dose for the age group (1 for ages 1–3, 2 otherwise), and included in the supplement check. Ready-made chips stay visible in the product form so you can switch between products. Amounts under 1 show three decimals."
     }
   ]
 }

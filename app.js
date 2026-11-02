@@ -3,7 +3,7 @@ import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standardUnits } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 
-export const APP_VERSION = '1.8.1';
+export const APP_VERSION = '1.9.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -24,6 +24,7 @@ export const CATS = [
 export const CAT = Object.fromEntries(CATS.map((c) => [c.k, c]));
 export const SOURCES = [
   { k: 'parent', label: 'Parents', em: '👤' },
+  { k: 'family', label: 'Family', em: '👪' },
   { k: 'teacher', label: 'Teacher', em: '🏫' },
   { k: 'carer', label: 'Carer', em: '🤲' },
   { k: 'doctor', label: 'Doctor', em: '🩺' },
@@ -228,6 +229,7 @@ export const srcKey = (e) => (e.src && SRC[e.src] ? e.src : 'parent');
 export function srcLabel(e) {
   const k = srcKey(e);
   if (k === 'parent') return e.srcName || e.by || 'Parent';
+  if (k === 'family') return e.srcName || 'Family';
   return SRC[k].label;
 }
 // What to show as an entry's heading. The description is optional when something else describes
@@ -264,8 +266,13 @@ const S = {
   insightRange: '30',
   exp: null, lastPdf: null, pdfUrl: null,
   hiddenItems: {},
+  // Family members ("helpers") use the app with their own code: S.role 'helper', S.fam their storage and key.
+  role: 'parent', fam: null, famErr: null, famSeen: {},
 };
 const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date);
+const isHelper = () => S.role === 'helper';
+const homeSrc = () => (isHelper() ? 'family' : 'parent');
+const syncOn = () => !!(isHelper() ? S.fam : S.sync);
 function sortEntries(list) {
   return list.sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1)
     : (TOD_RANK[b.tod] ?? 0) - (TOD_RANK[a.tod] ?? 0) || String(b.time || '').localeCompare(String(a.time || '')) || (b.createdAt || 0) - (a.createdAt || 0)));
@@ -306,19 +313,22 @@ function show(screen) { $('#app').dataset.screen = screen; }
 
 function showMain(opts = {}) {
   show('main');
+  $('#app').dataset.role = isHelper() ? 'helper' : 'parent';
   renderHeader();
   mountLogForm();
   switchTab(S.tab);
   updateSyncPill();
-  if (S.sync && opts.sync !== false) runSync();
+  if (syncOn() && opts.sync !== false) runSync();
 }
 
 function renderHeader() {
   const n = S.profile.childName;
+  if (isHelper()) { $('#child-line').textContent = `${n ? `For ${n}` : 'Family log'} · ${S.myName || 'Family'}`; return; }
   $('#child-line').textContent = n ? `${possessive(n)} journal` : 'Add your child\'s name in Settings';
 }
 
 function switchTab(tab) {
+  if (isHelper() && tab !== 'log' && tab !== 'history') tab = 'log';
   S.tab = tab;
   $$('.tabbar [data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
   $$('.tab-panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${tab}`));
@@ -375,11 +385,12 @@ function formHTML(st, e, mode) {
 }
 
 function sourceChipsHTML(st) {
-  const parentChips = parentNames(st.src === 'parent' ? st.srcName : '').map((n) =>
-    `<button type="button" class="chip" data-src="parent" data-name="${esc(n)}" aria-pressed="${st.src === 'parent' && st.srcName === n}"><span aria-hidden="true">👤</span>${esc(n)}</button>`).join('');
-  const otherChips = SOURCES.filter((s) => s.k !== 'parent').map((s) =>
-    `<button type="button" class="chip" data-src="${s.k}" aria-pressed="${st.src === s.k}"><span aria-hidden="true">${s.em}</span>${s.label}</button>`).join('');
-  return parentChips + otherChips;
+  const chip = (src, name, em, label, on) => `<button type="button" class="chip" data-src="${src}"${name ? ` data-name="${esc(name)}"` : ''} aria-pressed="${on}"><span aria-hidden="true">${em}</span>${esc(label)}</button>`;
+  const rest = (skip) => SOURCES.filter((s) => !skip.includes(s.k)).map((s) => chip(s.k, '', s.em, s.label, st.src === s.k)).join('');
+  if (isHelper()) { const me = S.myName || 'Me'; return chip('family', me, SRC.family.em, me, st.src === 'family') + rest(['parent', 'family']); }
+  const parentChips = parentNames(st.src === 'parent' ? st.srcName : '').map((n) => chip('parent', n, '👤', n, st.src === 'parent' && st.srcName === n)).join('');
+  const fam = st.src === 'family' ? st.srcName : '';
+  return parentChips + chip('family', fam, SRC.family.em, fam || SRC.family.label, st.src === 'family') + rest(['parent', 'family']);
 }
 function refreshSourceChips(el) {
   if (!el || !el._st) return;
@@ -460,7 +471,7 @@ function checkHTML(res, o) {
   if (res.unknown.length) lines.push(`<div class="chk muted">Not counted: ${res.unknown.map(esc).join(', ')}. Add the strength under "What's in it" to include ${res.unknown.length > 1 ? 'them' : 'it'}.</div>`);
   const all = res.totals.length ? `<details class="chk-all"><summary>All nutrients ${esc(dayWord(o.date))}</summary>${res.totals.map((t) => `<div class="nutri-row"><span>${esc(t.label)}</span><b>${fmtNum(t.total)} ${t.unit} <small>of ${fmtNum(t.ul)} (${Math.round(t.pct)}%)</small></b></div>`).join('')}</details>` : '';
   return `<div class="scheck">${o.title === false ? '' : `<span class="label">Supplement check ${esc(dayWord(o.date))}</span>`}${lines.join('')}${all}
-    <p class="hint">Counts supplements and medicines logged in Little One, not food. Upper levels are from Australia's Nutrient Reference Values for everyday intake (${age}). A doctor may prescribe more on purpose, such as iron for low ferritin, so follow their advice, and ask your GP or pharmacist if you're unsure.</p></div>`;
+    <p class="hint">${isHelper() ? `Counts only the supplements and medicines you've logged here, not what ${esc(S.profile.childName || 'your child')}'s parents have logged, and not food.` : 'Counts supplements and medicines logged in Little One, not food.'} Upper levels are from Australia's Nutrient Reference Values for everyday intake (${age}). A doctor may prescribe more on purpose, such as iron for low ferritin, so follow their advice, and ask your GP or pharmacist if you're unsure.</p></div>`;
 }
 function refreshCheck(el) {
   const box = $('[data-check]', el); if (!box) return;
@@ -675,11 +686,11 @@ function autoSleepKind(el) {
 
 function mountForm(el, entry, mode) {
   const e = entry || {};
-  const isParent = !e.src || e.src === 'parent';
+  const src = e.src && SRC[e.src] && !(isHelper() && e.src === 'parent') ? e.src : homeSrc();
   const st = {
     mode, id: mode === 'edit' ? e.id : null,
-    cat: e.cat || '', src: isParent ? 'parent' : e.src,
-    srcName: isParent ? (e.srcName || (mode === 'edit' ? e.by : '') || S.myName || 'Me') : '',
+    cat: e.cat || '', src,
+    srcName: src === 'parent' ? (e.srcName || (mode === 'edit' ? e.by : '') || S.myName || 'Me') : src === 'family' ? (e.srcName || (isHelper() ? S.myName || 'Me' : '')) : '',
     sev: e.sev || 0,
     extra: { temp: e.temp || '', med: e.med || '', dose: e.dose || '', time: e.time || (mode === 'new' && !('time' in e) ? nowHHMM() : ''), awake: e.awake || '' },
     timeTouched: mode === 'edit' || !!e.timeTouched,
@@ -701,8 +712,8 @@ function mountForm(el, entry, mode) {
       if (st.cat !== b.dataset.cat) st.batch = []; // a selection belongs to one area
       st.cat = b.dataset.cat;
       $$('.cat-btn', el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-      if (st.cat === 'bloodtest' && !st.srcTouched && st.src === 'parent') { st.src = 'doctor'; st.srcName = ''; st.srcAuto = true; refreshSourceChips(el); }
-      else if (st.cat !== 'bloodtest' && st.srcAuto) { st.src = 'parent'; st.srcName = S.myName || 'Me'; st.srcAuto = false; refreshSourceChips(el); }
+      if (st.cat === 'bloodtest' && !st.srcTouched && st.src === homeSrc()) { st.src = 'doctor'; st.srcName = ''; st.srcAuto = true; refreshSourceChips(el); }
+      else if (st.cat !== 'bloodtest' && st.srcAuto) { st.src = homeSrc(); st.srcName = S.myName || 'Me'; st.srcAuto = false; refreshSourceChips(el); }
       autoSleepKind(el);
       renderExtra(el); syncFormBits(el); saveDraft(el);
     } else if (b.hasAttribute('data-kind')) {
@@ -888,7 +899,7 @@ async function saveForm(el) {
   const prev = st.id ? S.entries.get(st.id) : null;
   const e = prev && !prev.deleted ? { ...prev } : { id: Sync.randomId(12), createdAt: now, by: S.myName || '', byDev: S.deviceId };
   Object.assign(e, {
-    date, tod, cat: st.cat, src: st.src, srcName: st.src === 'parent' ? st.srcName : '',
+    date, tod, cat: st.cat, src: st.src, srcName: st.src === 'parent' || st.src === 'family' ? st.srcName : '',
     title: title.slice(0, 160), notes: notes.slice(0, 8000), sev: NO_CONCERN.has(st.cat) ? 1 : st.sev || 0, updatedAt: now,
   });
   const keep = [...(EXTRA_FIELDS[st.cat] || []), 'time'];
@@ -928,7 +939,7 @@ async function saveBatch(el) {
   for (const b of st.batch) {
     const e = {
       id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId,
-      date, tod, cat: st.cat, src: st.src, srcName: st.src === 'parent' ? st.srcName : '',
+      date, tod, cat: st.cat, src: st.src, srcName: st.src === 'parent' || st.src === 'family' ? st.srcName : '',
       title: (title || b.title || '').slice(0, 160), notes: notes.slice(0, 8000), sev: NO_CONCERN.has(st.cat) ? 1 : st.sev || 0, med: b.med,
     };
     if (time) e.time = time;
@@ -966,7 +977,7 @@ async function quickWake(el) {
   const e = {
     id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId,
     date: today(), tod: currentTod(), time: nowHHMM(), cat: 'sleep', sleep: 'waking', awake: QUICK_AWAKE,
-    src: 'parent', srcName: S.myName || 'Me', title: '', notes: '', sev: 0,
+    src: homeSrc(), srcName: S.myName || 'Me', title: '', notes: '', sev: 0,
   };
   S.entries.set(e.id, e);
   try { await putEntries([e]); } catch (err) { toast("Couldn't save on this phone: " + (err.message || err)); return; }
@@ -987,10 +998,10 @@ async function quickWake(el) {
 function repeatEntry(e) {
   if (!e || e.deleted) return;
   const now = new Date();
-  const k = srcKey(e);
+  const k0 = srcKey(e); const k = k0 === 'parent' || k0 === 'family' ? homeSrc() : k0;
   const draft = {
     date: today(), tod: currentTod(), cat: e.cat, title: e.title, notes: '',
-    src: k, srcName: k === 'parent' ? (S.myName || 'Me') : '', sev: e.sev,
+    src: k, srcName: k === homeSrc() ? (S.myName || 'Me') : '', sev: e.sev,
     med: e.med || '', dose: e.dose || '', temp: '', time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
     results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name, unit: r.unit || '', low: r.low || '', high: r.high || '', value: '' })) : [],
     sleep: e.sleep || '', kindTouched: !!e.sleep,
@@ -1023,7 +1034,7 @@ function openEntry(id) {
 }
 
 // ---------------------------------------------------------------- history
-// Supplements or medicines given together (within 15 minutes) and a night's wake-ups show as one line
+// Supplements or medicines one person gave together (within 15 minutes), and a night's wake-ups, show as one line
 // in History, which opens to show each entry.
 const GROUP_MINUTES = 15;
 const hhmmMin = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(t || ''); return m ? +m[1] * 60 + +m[2] : null; };
@@ -1032,12 +1043,12 @@ function groupKind(e) { return ITEM_LABEL[e.cat] ? e.cat : e.cat === 'sleep' && 
 export function groupDay(list) {
   const out = []; const open = [];
   for (const e of list) {
-    const k = groupKind(e); const t = hhmmMin(e.time);
+    const k = groupKind(e); const t = hhmmMin(e.time); const who = `${srcKey(e)}|${srcLabel(e)}`;
     let g = null;
-    if (k === 'waking') { const last = out[out.length - 1]; if (last && last.kind === 'waking') g = last; }
-    else if (k) g = open.find((x) => x.kind === k && (t != null && x.t != null ? Math.abs(x.t - t) <= GROUP_MINUTES : t == null && x.t == null && x.tod === e.tod));
+    if (k === 'waking') { const last = out[out.length - 1]; if (last && last.kind === 'waking' && last.who === who) g = last; }
+    else if (k) g = open.find((x) => x.kind === k && x.who === who && (t != null && x.t != null ? Math.abs(x.t - t) <= GROUP_MINUTES : t == null && x.t == null && x.tod === e.tod));
     if (g) { g.items.push(e); continue; }
-    const n = { kind: k, items: [e], t, tod: e.tod };
+    const n = { kind: k, items: [e], t, tod: e.tod, who };
     out.push(n); if (k && k !== 'waking') open.push(n);
   }
   return out;
@@ -1047,7 +1058,7 @@ function fmtRange(a, b) {
   const x = fmtTime(a); const y = fmtTime(b);
   return x.slice(-2) === y.slice(-2) ? `${x.slice(0, -2)}–${y}` : `${x}–${y}`;
 }
-const srcPill = (e) => { const k = srcKey(e); return `<span class="tag ${k === 'parent' ? 'src-parent' : 'src-other'}"><span aria-hidden="true">${SRC[k].em}</span> ${esc(srcLabel(e))}</span>`; };
+const srcPill = (e) => { const k = srcKey(e); return `<span class="tag ${k === 'parent' ? 'src-parent' : k === 'family' ? 'src-family' : 'src-other'}"><span aria-hidden="true">${SRC[k].em}</span> ${esc(srcLabel(e))}</span>`; };
 const chevron = '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 
 // Earliest first, keeping the order they were picked in when logged together.
@@ -1103,10 +1114,10 @@ function repeatGroup(list) {
     items.push(batchItem({ key, med, dose: String(e.dose || '').trim(), title: e.title || '', contents: Array.isArray(e.contents) ? e.contents : [], product: e.product || '', units: e.units || '' }));
   }
   if (items.length < 2) { repeatEntry(list.find((e) => String(e.med || '').trim()) || list[0]); return; }
-  const cat = list[0].cat; const k = srcKey(list[0]);
+  const cat = list[0].cat; const k0 = srcKey(list[0]); const k = k0 === 'parent' || k0 === 'family' ? homeSrc() : k0;
   const draft = {
     date: today(), tod: currentTod(), time: nowHHMM(), cat, title: '', notes: '', sev: 0,
-    src: k, srcName: k === 'parent' ? (S.myName || 'Me') : '', med: '', dose: '', contents: [], product: '', units: '', batch: items,
+    src: k, srcName: k === homeSrc() ? (S.myName || 'Me') : '', med: '', dose: '', contents: [], product: '', units: '', batch: items,
   };
   switchTab('log');
   const el = $('#log-form'); mountForm(el, draft, 'new'); saveDraft(el);
@@ -1134,7 +1145,7 @@ function entryCardHTML(e, nightByWake, grp) {
   const tags = [];
   if (!noConcern(e)) tags.push(`<span class="tag">${SEV[e.sev] || 'Mild'} concern</span>`);
   if (grp && !grp.oneSrc) tags.push(srcPill(e));
-  if (e.by && !(k === 'parent' && (e.srcName || e.by) === e.by)) tags.push(`<span class="tag">Logged by ${esc(e.by)}</span>`);
+  if (e.by && !((k === 'parent' || k === 'family') && srcLabel(e) === e.by)) tags.push(`<span class="tag">Logged by ${esc(e.by)}</span>`);
   // Inside a group the area, time and who are on the group's line; an entry shows its own time only when it differs.
   const ownWhen = grp && when !== grp.when && !(hl.from === 'sleep' && e.time) ? `<span class="entry-when">${esc(when)}</span>` : '';
   const top = grp
@@ -1687,24 +1698,34 @@ async function shareFile(blob, name, type) {
 // ---------------------------------------------------------------- sync
 let syncTimer = null; let syncing = false; let syncAgain = false;
 function scheduleSync(delay = 1200) {
-  if (!S.sync) return;
+  if (!syncOn()) return;
   clearTimeout(syncTimer);
   if (!syncing) setSyncStatus('pending');
   syncTimer = setTimeout(runSync, delay);
 }
 async function runSync() {
-  if (!S.sync) { setSyncStatus('off'); return null; }
+  if (!syncOn()) { setSyncStatus('off'); return null; }
   if (syncing) { syncAgain = true; return null; }
   clearTimeout(syncTimer);
   syncing = true; setSyncStatus('busy');
   let result = null;
   try {
-    result = await Sync.syncOnce({ ...S.sync, deviceId: S.deviceId }, {
-      getState: () => kvGet('syncState'),
-      setState: (s) => kvSet('syncState', s),
-      merge: mergeRemote,
-      snapshot: () => ({ name: S.myName || '', profile: S.profile, entries: Array.from(S.entries.values()) }),
-    });
+    if (isHelper()) {
+      result = await Sync.syncHelper({ repo: S.fam.repo, token: S.fam.token, keyRaw: S.fam.keyRaw, helperId: S.fam.id, deviceId: S.deviceId }, {
+        getState: () => kvGet('syncState'),
+        setState: (s) => kvSet('syncState', s),
+        merge: mergeOwn,
+        snapshot: () => ({ name: S.myName || '', entries: Array.from(S.entries.values()) }),
+      });
+    } else {
+      await pullFamily(); // family members' entries first, so they go out to the partner's phone in this sync
+      result = await Sync.syncOnce({ ...S.sync, deviceId: S.deviceId }, {
+        getState: () => kvGet('syncState'),
+        setState: (s) => kvSet('syncState', s),
+        merge: mergeRemote,
+        snapshot: () => ({ name: S.myName || '', profile: S.profile, entries: Array.from(S.entries.values()) }),
+      });
+    }
     S.lastSyncAt = Date.now(); S.syncError = null; setSyncStatus('ok');
   } catch (e) {
     console.warn('sync', e);
@@ -1716,9 +1737,87 @@ async function runSync() {
   return result;
 }
 
+const newerEntry = (a, b) => ((a.updatedAt || 0) !== (b.updatedAt || 0) ? (a.updatedAt || 0) > (b.updatedAt || 0) : JSON.stringify(a) > JSON.stringify(b));
+
+// ---- family members (see sync.js "family helpers")
+const ID_RE = /^[a-f0-9]{8,40}$/;
+function cleanFamily(f) {
+  if (!f || typeof f !== 'object') return null;
+  const members = {};
+  Object.keys(f.members && typeof f.members === 'object' ? f.members : {}).sort().forEach((id) => {
+    const m = f.members[id];
+    if (!ID_RE.test(id) || !m || typeof m !== 'object') return;
+    members[id] = { name: String(m.name || '').slice(0, 40), key: m.removed ? '' : String(m.key || ''), createdAt: +m.createdAt || 0, updatedAt: +m.updatedAt || 0, removed: !!m.removed };
+  });
+  return { repo: Sync.normaliseRepo(f.repo) || '', token: String(f.token || ''), updatedAt: +f.updatedAt || 0, members };
+}
+function mergeFamilyConfig(a, b) {
+  a = cleanFamily(a); b = cleanFamily(b);
+  if (!a || !b) return a || b;
+  const base = b.updatedAt > a.updatedAt ? b : a;
+  const all = { ...a.members };
+  Object.entries(b.members).forEach(([id, m]) => { if (!all[id] || m.updatedAt > all[id].updatedAt) all[id] = m; });
+  return cleanFamily({ repo: base.repo, token: base.token, updatedAt: base.updatedAt, members: all });
+}
+const familyMembers = (all) => Object.entries((S.profile.family && S.profile.family.members) || {}).filter(([, m]) => all || !m.removed);
+async function saveFamily(f) { S.profile = { ...S.profile, family: cleanFamily(f) }; await kvSet('profile', S.profile); scheduleSync(300); }
+
+// Parents' phones: copy in what each current family member has logged. A member can only ever add, change or
+// delete their own entries, and their name on each entry comes from the parents' list, not from their phone.
+async function mergeHelper(id, p) {
+  const m = (S.profile.family && S.profile.family.members || {})[id];
+  if (!m || m.removed) return 0;
+  const name = m.name || 'Family';
+  let changed = 0; let n = 0; const put = [];
+  for (const r of Array.isArray(p.entries) ? p.entries : []) {
+    if (!r || typeof r.id !== 'string' || !ID_RE.test(r.id)) continue;
+    if (!r.deleted && !(CAT[r.cat] && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || '')))) continue;
+    if (!r.deleted) n++;
+    const l = S.entries.get(r.id);
+    if (l && l.member !== id) continue;
+    const x = r.deleted ? { id: r.id, deleted: true, updatedAt: +r.updatedAt || 0, by: name, member: id } : { ...r, member: id, by: name };
+    if (!r.deleted) {
+      if (!SRC[x.src] || x.src === 'parent') x.src = 'family';
+      x.srcName = x.src === 'family' ? name : '';
+      if (x.editedBy) x.editedBy = name;
+    }
+    if (!l || newerEntry(x, l)) { S.entries.set(x.id, x); put.push(x); changed++; }
+  }
+  await putEntries(put);
+  S.famSeen[id] = { at: +p.at || 0, n };
+  return changed;
+}
+async function pullFamily() {
+  const f = S.profile.family;
+  const helpers = f && f.repo && f.token ? familyMembers(false).filter(([, m]) => m.key).map(([id, m]) => ({ id, key: m.key })) : [];
+  if (!helpers.length) { S.famErr = null; return; }
+  try {
+    const r = await Sync.pullHelpers({ repo: f.repo, token: f.token, helpers }, {
+      getState: () => kvGet('famState'), setState: (s) => kvSet('famState', s), merge: mergeHelper,
+    });
+    S.famErr = r.problems.length ? { code: 'unreadable', ids: r.problems } : null;
+    await kvSet('famSeen', S.famSeen);
+    if (r.pulled && $('#app').dataset.screen === 'main') renderDependent();
+  } catch (e) { console.warn('family', e); S.famErr = e; }
+}
+// A family member's own phones: merge their entries between their devices.
+async function mergeOwn(payloads) {
+  let changed = 0; const put = [];
+  for (const p of payloads) {
+    for (const r of Array.isArray(p.entries) ? p.entries : []) {
+      if (!r || typeof r.id !== 'string' || !r.id) continue;
+      const l = S.entries.get(r.id);
+      if (!l || newerEntry(r, l)) { S.entries.set(r.id, r); put.push(r); changed++; }
+    }
+  }
+  await putEntries(put);
+  if (changed && $('#app').dataset.screen === 'main') renderDependent();
+  return changed;
+}
+
 async function mergeRemote(payloads) {
   let changed = 0; const put = [];
-  const newer = (a, b) => ((a.updatedAt || 0) !== (b.updatedAt || 0) ? (a.updatedAt || 0) > (b.updatedAt || 0) : JSON.stringify(a) > JSON.stringify(b));
+  const newer = newerEntry;
   for (const p of payloads) {
     if (!p || p.app !== 'littleone') continue;
     for (const r of Array.isArray(p.entries) ? p.entries : []) {
@@ -1727,10 +1826,16 @@ async function mergeRemote(payloads) {
       if (!l || newer(r, l)) { S.entries.set(r.id, r); put.push(r); changed++; }
     }
     if (p.profile && (p.profile.updatedAt || 0) > (S.profile.updatedAt || 0)) {
+      const fam = S.profile.family;
       S.profile = { childName: String(p.profile.childName || ''), updatedAt: p.profile.updatedAt };
+      if (fam) S.profile.family = fam;
       if (['3-5', '5-13', 'off'].includes(p.profile.sleepGuide)) S.profile.sleepGuide = p.profile.sleepGuide;
       if (AGE_GROUPS[p.profile.nrvAge]) S.profile.nrvAge = p.profile.nrvAge;
       await kvSet('profile', S.profile); changed++;
+    }
+    if (p.profile && p.profile.family) {
+      const merged = mergeFamilyConfig(S.profile.family, p.profile.family);
+      if (JSON.stringify(merged) !== JSON.stringify(cleanFamily(S.profile.family))) { S.profile = { ...S.profile, family: merged }; await kvSet('profile', S.profile); changed++; }
     }
     if (p.dev && p.dev !== S.deviceId) S.members[p.dev] = { name: String(p.name || '').slice(0, 40), at: p.at || 0 };
   }
@@ -1747,7 +1852,7 @@ function setSyncStatus(status) { S.syncStatus = status; updateSyncPill(); }
 function updateSyncPill() {
   const pill = $('#sync-pill'); if (!pill) return;
   const map = { off: ['off', 'Not synced'], pending: ['pending', 'Syncing…'], busy: ['busy', 'Syncing…'], ok: ['ok', 'Synced'], offline: ['pending', 'Offline'], error: ['error', 'Sync problem'] };
-  const [state, text] = S.sync ? (map[S.syncStatus] || map.ok) : map.off;
+  const [state, text] = syncOn() ? (map[S.syncStatus] || map.ok) : map.off;
   pill.dataset.state = state; $('#sync-text').textContent = text;
   pill.setAttribute('aria-label', `Sync status: ${text}`);
 }
@@ -1864,6 +1969,10 @@ function openJoin(withProfile, prefill = '') {
         const btn = ev.target.closest('[data-act="jn-join"]'); if (!btn) return;
         const msg = $('#jn-msg', b);
         const name = withProfile ? $('#jn-name', b).value.trim() : S.myName;
+        if (Sync.inviteKind($('#jn-code', b).value) === 'helper') {
+          if (!withProfile) return showMsg(msg, 'warn', "That's a family member's code. Family codes are used on a family member's own phone.");
+          const code = $('#jn-code', b).value; closeSheet(); openHelperJoin(code); return;
+        }
         const inv = Sync.readInvite($('#jn-code', b).value);
         const pass = $('#jn-pass', b).value;
         if (withProfile && !name) return showMsg(msg, 'warn', 'Add your name first.');
@@ -1920,6 +2029,7 @@ function membersList() {
 }
 
 async function openSettings() {
+  if (isHelper()) { openHelperSettings(); return; }
   let persisted = null;
   try { persisted = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : null; } catch (e) { /* ignore */ }
   const lastBackup = await kvGet('lastBackupAt');
@@ -1958,6 +2068,7 @@ async function openSettings() {
         <div class="btn-stack"><button type="button" class="btn dark" data-act="st-new">Set up sync</button><button type="button" class="btn ghost" data-act="st-join">Join a shared log</button></div>
       `}
     </div>
+    ${S.sync ? familySectionHTML() : ''}
     <div class="set-section">
       <h3>Backup file</h3>
       <p class="hint intro">${S.sync ? 'Your synced storage already keeps a locked copy. A backup file is an extra copy you keep yourself.' : 'Without sync, a backup file is the only copy outside this phone.'} Last backup: ${lastBackup ? esc(ago(lastBackup)) : 'never'}.</p>
@@ -1999,6 +2110,11 @@ async function openSettings() {
         else if (a === 'st-join') openJoin(false);
         else if (a === 'st-backup') openBackup();
         else if (a === 'st-restore') openRestore();
+        else if (a === 'fam-setup') openFamilySetup(false);
+        else if (a === 'fam-key') openFamilySetup(true);
+        else if (a === 'fam-add') openAddHelper();
+        else if (btn.dataset.famCode) openHelperCode(btn.dataset.famCode, false);
+        else if (btn.dataset.famRemove) openRemoveHelper(btn.dataset.famRemove);
       };
     },
   });
@@ -2106,6 +2222,226 @@ function openRestore() {
   });
 }
 
+// ---------------------------------------------------------------- family members
+// Parents add family members (grandparents and so on) here. Each gets their own code for their own phone.
+const childOr = (fallback) => S.profile.childName || fallback;
+function familySectionHTML() {
+  const f = S.profile.family;
+  if (!f || !f.repo || !f.token) {
+    return `<div class="set-section">
+      <h3>Family members</h3>
+      <p class="hint intro">Let grandparents and other family add entries from their own phones. They only ever see what they add. You and your partner see everything.</p>
+      <div class="btn-stack"><button type="button" class="btn dark" data-act="fam-setup">Set up family members</button></div>
+    </div>`;
+  }
+  const list = familyMembers(false).sort((a, b) => a[1].createdAt - b[1].createdAt);
+  const err = S.famErr;
+  const errText = !err ? '' : err.code === 'unreadable'
+    ? `Some entries from ${familyMembers(true).filter(([id]) => err.ids.includes(id)).map(([, m]) => esc(m.name)).join(', ') || 'a family member'} couldn't be unlocked, so they were skipped. If this keeps happening, remove that person and add them again for a new code.`
+    : esc(err.message || String(err));
+  return `<div class="set-section">
+    <h3>Family members</h3>
+    ${err ? `<div class="notice ${err.code === 'offline' ? 'warn' : 'err'}">${errText}</div>` : ''}
+    ${list.length ? `<div class="card kv-card">${list.map(([id, m]) => {
+      const seen = S.famSeen[id];
+      return `<div class="kv helper-row"><span><b>${esc(m.name)}</b><small>${seen && seen.at ? `Last synced ${esc(ago(seen.at))} · ${seen.n} entr${seen.n === 1 ? 'y' : 'ies'}` : 'Not joined yet'}</small></span>
+        <span class="mini-links"><button type="button" data-fam-code="${esc(id)}">Code</button><button type="button" data-fam-remove="${esc(id)}">Remove</button></span></div>`;
+    }).join('')}</div>` : '<p class="hint">No family members yet.</p>'}
+    <div class="btn-stack"><button type="button" class="btn dark" data-act="fam-add">Add a family member</button><button type="button" class="btn ghost" data-act="fam-key">Update family storage key</button></div>
+    <p class="hint">Their entries appear in your log with their name. Family storage: ${esc(f.repo)}.</p>
+  </div>`;
+}
+
+function suggestedFamilyRepo() {
+  const owner = (S.sync && S.sync.repo ? S.sync.repo.split('/')[0] : '') || (location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : '');
+  return owner ? `${owner}/littleone-family` : '';
+}
+
+function openFamilySetup(update) {
+  const f = S.profile.family;
+  openSheet(update ? 'Update family storage key' : 'Set up family members', `
+    <p class="hint intro">${update
+      ? "Use this if the family storage key expired, or you made a new one to stop someone reaching the family storage. Afterwards, send each family member a new code: their old code carries the old key."
+      : 'Family entries are kept in a second private storage, separate from your log. Family members get a key that can only reach that storage, so they can never reach your entries.'}</p>
+    <ol class="steps">
+      ${update ? '' : '<li>On GitHub, open <b>github.com/new</b>. Name it <b>littleone-family</b>, choose <b>Private</b>, and tap <b>Create repository</b>.</li>'}
+      <li>Open <b>github.com/settings/personal-access-tokens/new</b>. Name it <b>Little One family</b> and set <b>Expiration</b> to <b>No expiration</b>.</li>
+      <li>Under <b>Repository access</b>, choose <b>Only select repositories</b> and pick <b>littleone-family</b> only. Leave your main storage out.</li>
+      <li>Under <b>Permissions</b>, add <b>Contents</b> and set it to <b>Read and write</b>. Tap <b>Generate token</b> and copy it.</li>
+    </ol>
+    <div class="field"><label class="label" for="fs-repo">Family storage (owner/name)</label><input class="input" id="fs-repo" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="yourname/littleone-family" value="${esc((f && f.repo) || suggestedFamilyRepo())}"></div>
+    <div class="field"><label class="label" for="fs-token">Family storage key</label><input class="input" id="fs-token" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off" placeholder="github_pat_…"><p class="hint">Kept inside your locked log, so your partner's phone gets it too.</p></div>
+    <div id="fs-msg" hidden></div>
+    <button type="button" class="btn primary block" data-act="fs-save">Check and save</button>`, {
+    full: true,
+    onMount: (b) => {
+      b.onclick = async (ev) => {
+        const btn = ev.target.closest('[data-act="fs-save"]'); if (!btn) return;
+        const msg = $('#fs-msg', b);
+        const repo = Sync.normaliseRepo($('#fs-repo', b).value); const token = $('#fs-token', b).value.trim();
+        if (!repo) return showMsg(msg, 'warn', 'Enter the family storage as owner/name, for example yourname/littleone-family.');
+        if (!token) return showMsg(msg, 'warn', 'Paste the family storage key.');
+        if (token === S.sync.token) return showMsg(msg, 'warn', "That's the key for your main storage. Make a separate key that can only reach the family storage.");
+        setBusy(btn, true, 'Checking…');
+        try {
+          await Sync.setupFamilyStorage(repo, token, S.sync.repo);
+          const cur = cleanFamily(S.profile.family) || { members: {} };
+          await saveFamily({ ...cur, repo, token, updatedAt: Date.now() });
+          await kvDel('famState');
+          closeSheet();
+          if (update) { toast('Saved. Send each family member a new code from Settings.'); openSettings(); } else openAddHelper();
+        } catch (e) { showMsg(msg, 'err', esc(e.message || String(e))); } finally { setBusy(btn, false); }
+      };
+    },
+  });
+}
+
+function openAddHelper() {
+  openSheet('Add a family member', `
+    <p class="hint intro">Each family member gets their own code for their own phone. With it they can add entries and see only the ones they've added.</p>
+    <div class="field"><label class="label" for="ah-name">Their name</label><input class="input" id="ah-name" maxlength="40" autocomplete="off" placeholder="e.g. Grandma, Nan or Uncle Tom"><p class="hint">Shown on everything they log.</p></div>
+    <div id="ah-msg" hidden></div>
+    <button type="button" class="btn primary block" data-act="ah-make">Make their code</button>`, {
+    full: true,
+    onMount: (b) => {
+      b.onclick = async (ev) => {
+        const btn = ev.target.closest('[data-act="ah-make"]'); if (!btn) return;
+        const name = $('#ah-name', b).value.trim();
+        if (!name) return showMsg($('#ah-msg', b), 'warn', 'Add their name first.');
+        const id = Sync.randomId(9); const now = Date.now();
+        const cur = cleanFamily(S.profile.family);
+        cur.members[id] = { name: name.slice(0, 40), key: Sync.newHelperKey(), createdAt: now, updatedAt: now, removed: false };
+        await saveFamily(cur);
+        openHelperCode(id, true);
+      };
+    },
+  });
+}
+
+function openHelperCode(id, justMade) {
+  const f = S.profile.family; const m = f && f.members[id]; if (!m || m.removed) return;
+  const code = Sync.makeHelperInvite({ repo: f.repo, token: f.token, id, key: m.key, name: m.name, child: S.profile.childName, age: S.profile.nrvAge });
+  const who = esc(m.name);
+  openSheet(`${m.name}'s code`, `
+    ${justMade ? `<div class="notice ok"><b>${who} is added.</b> Send them this code to finish.</div>` : ''}
+    <ol class="steps">
+      <li>On ${who}'s phone, open <b>${esc(siteUrl())}</b> in Safari and add Little One to the Home Screen.</li>
+      <li>Open it from the Home Screen and tap <b>Join as family</b>.</li>
+      <li>Paste the code below.</li>
+    </ol>
+    <div class="code-box" id="hc-code">${esc(code)}</div>
+    <div class="btn-row"><button type="button" class="btn dark" data-act="hc-copy">Copy code</button><button type="button" class="btn ghost" data-act="hc-share">Share code</button></div>
+    <p class="hint mt14">Send it privately. Anyone with this code can add entries as ${who} and see what ${who} has added, but nothing else. If it's shared by mistake, remove ${who} and add them again for a new code.</p>`, {
+    onMount: (b) => {
+      b.onclick = async (ev) => {
+        const btn = ev.target.closest('button'); if (!btn) return;
+        if (btn.dataset.act === 'hc-copy') {
+          try { await navigator.clipboard.writeText(code); toast('Code copied'); } catch (e) { toast('Select the code and copy it'); }
+        } else if (btn.dataset.act === 'hc-share') {
+          if (navigator.share) { try { await navigator.share({ text: code }); } catch (e) { /* cancelled */ } } else { try { await navigator.clipboard.writeText(code); toast('Code copied'); } catch (e) { /* ignore */ } }
+        }
+      };
+    },
+  });
+}
+
+function openRemoveHelper(id) {
+  const m = S.profile.family && S.profile.family.members[id]; if (!m) return;
+  const who = esc(m.name);
+  openSheet(`Remove ${m.name}?`, `
+    <p>Entries ${who} has already added stay in your log. Anything new from ${who}'s phone won't be added.</p>
+    <p class="hint">${who}'s phone can still reach the family storage until you make a new family storage key on GitHub, delete the old one, and update it here. You'd then send new codes to everyone you're keeping.</p>
+    <div class="btn-row mt18"><button type="button" class="btn ghost" data-act="close-sheet">Keep ${who}</button><button type="button" class="btn danger" data-act="rm-confirm">Remove</button></div>`, {
+    onMount: (b) => {
+      b.onclick = async (ev) => {
+        if (!ev.target.closest('[data-act="rm-confirm"]')) return;
+        const cur = cleanFamily(S.profile.family);
+        cur.members[id] = { ...cur.members[id], key: '', removed: true, updatedAt: Date.now() };
+        await saveFamily(cur);
+        toast(`${m.name} removed`); openSettings();
+      };
+    },
+  });
+}
+
+// Family member phones.
+function openHelperJoin(prefill = '') {
+  openSheet('Join as family', `
+    <p class="hint intro">Paste the code you were sent. You'll be able to add entries and look back at the ones you've added. What the parents log stays private to them.</p>
+    <div class="field"><label class="label" for="hj-code">Family code</label><textarea class="textarea" id="hj-code" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Starts with LOF1-">${esc(prefill)}</textarea></div>
+    <div id="hj-msg" hidden></div>
+    <button type="button" class="btn primary block" data-act="hj-join">Join</button>`, {
+    full: true,
+    onMount: (b) => {
+      b.onclick = async (ev) => {
+        const btn = ev.target.closest('[data-act="hj-join"]'); if (!btn) return;
+        const msg = $('#hj-msg', b); const code = $('#hj-code', b).value;
+        if (Sync.inviteKind(code) === 'partner') return showMsg(msg, 'warn', "That's a partner invite, which also needs the family passphrase. If you're a parent, go back and choose Join my partner's log.");
+        const inv = Sync.readHelperInvite(code);
+        if (!inv) return showMsg(msg, 'warn', "That code doesn't look right. Copy the whole code, starting with LOF1-.");
+        setBusy(btn, true, 'Joining…');
+        try {
+          await Sync.checkFamilyStorage(inv.repo, inv.token);
+          await becomeHelper(inv);
+          closeSheet(); showMain({ sync: false });
+          const r = await runSync();
+          toast(r && r.pulled ? `Welcome back, ${S.myName}. Your earlier entries are here.` : `You're set up as ${S.myName}. What you add is shared with ${childOr('the')}${S.profile.childName ? "'s" : ''} parents.`);
+        } catch (e) { console.warn(e); showMsg(msg, 'err', esc(e.message || String(e))); } finally { setBusy(btn, false); }
+      };
+    },
+  });
+}
+async function becomeHelper(inv) {
+  const same = S.fam && S.fam.id === inv.id;
+  S.role = 'helper'; await kvSet('role', 'helper');
+  S.fam = { repo: inv.repo, token: inv.token, id: inv.id, keyRaw: inv.keyRaw }; await kvSet('fam', S.fam);
+  if (!same) await kvDel('syncState');
+  S.myName = inv.name || 'Family'; await kvSet('myName', S.myName);
+  S.profile = { childName: inv.child, updatedAt: 0 };
+  if (AGE_GROUPS[inv.age]) S.profile.nrvAge = inv.age;
+  await kvSet('profile', S.profile);
+  await kvSet('setupDone', true);
+}
+
+async function openHelperSettings() {
+  let persisted = null;
+  try { persisted = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : null; } catch (e) { /* ignore */ }
+  const err = S.syncError && S.syncStatus !== 'ok' ? S.syncError : null;
+  const child = esc(childOr('the child'));
+  openSheet('Settings', `
+    <div class="set-section">
+      <h3>You</h3>
+      ${err ? `<div class="notice ${err.code === 'offline' ? 'warn' : 'err'}">${esc(err.message)}</div>` : ''}
+      <div class="card kv-card">
+        <div class="kv"><span>Logging as</span><span>${esc(S.myName || 'Family')}</span></div>
+        <div class="kv"><span>For</span><span>${child}</span></div>
+        <div class="kv"><span>Last synced</span><span>${esc(ago(S.lastSyncAt))}</span></div>
+      </div>
+      <div class="btn-stack"><button type="button" class="btn dark" data-act="hs-sync">Sync now</button><button type="button" class="btn ghost" data-act="hs-code">Use a new code</button></div>
+    </div>
+    <div class="set-section">
+      <h3>Privacy</h3>
+      <ul class="steps">
+        <li>You can see the entries you add. ${child === 'the child' ? 'The parents' : `${child}'s parents`} can see them too.</li>
+        <li>What the parents or other family log stays private to them. This phone can't unlock it.</li>
+        <li>Your entries are locked on this phone before they're stored, with a key only your code carries.</li>
+        <li>The app can only talk to GitHub. No analytics, ads or tracking.</li>
+      </ul>
+      <div class="kv"><span>Storage on this phone</span><span>${persisted === true ? 'Kept permanently' : persisted === false ? 'May be cleared if space runs low' : 'Unknown'}</span></div>
+      <div class="kv"><span>Your entries</span><span>${live().length}</span></div>
+      <div class="kv"><span>Version</span><span>${APP_VERSION}</span></div>
+    </div>`, {
+    full: true,
+    onMount: (b) => {
+      b.onclick = async (ev) => {
+        const btn = ev.target.closest('button'); if (!btn) return;
+        if (btn.dataset.act === 'hs-sync') { setBusy(btn, true, 'Syncing…'); const r = await runSync(); setBusy(btn, false); if (r) toast('Synced'); openHelperSettings(); }
+        else if (btn.dataset.act === 'hs-code') openHelperJoin();
+      };
+    },
+  });
+}
+
 // ---------------------------------------------------------------- update banner (service worker)
 let updateRequested = false;
 function registerSW() {
@@ -2137,6 +2473,9 @@ async function init() {
   S.sync = (await kvGet('sync')) || null;
   S.members = (await kvGet('members')) || {};
   S.hiddenItems = (await kvGet('hiddenItems')) || {};
+  S.role = (await kvGet('role')) === 'helper' ? 'helper' : 'parent';
+  S.fam = (await kvGet('fam')) || null;
+  S.famSeen = (await kvGet('famSeen')) || {};
   const ss = await kvGet('syncState'); S.lastSyncAt = (ss && ss.lastSyncAt) || 0;
   (await getAllEntries()).forEach((e) => S.entries.set(e.id, e));
 
@@ -2148,12 +2487,13 @@ async function init() {
     if (a === 'close-sheet') closeSheet();
     else if (a === 'start-new') openNewLog(true);
     else if (a === 'start-join') openJoin(true);
+    else if (a === 'start-helper') openHelperJoin();
   });
   document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && $('#sheet-wrap').classList.contains('open')) closeSheet(); });
   $$('.tabbar [data-tab]').forEach((b) => { b.onclick = () => switchTab(b.dataset.tab); });
   $('#open-settings').onclick = openSettings;
   $('#sync-pill').onclick = async () => {
-    if (!S.sync) { openSettings(); return; }
+    if (!syncOn()) { openSettings(); return; }
     if (S.syncStatus === 'error') { openSettings(); return; }
     const r = await runSync();
     if (r) toast('Synced just now'); else if (S.syncError) toast(S.syncError.message);
@@ -2163,10 +2503,10 @@ async function init() {
   $('#install-skip').onclick = () => show('welcome');
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && S.sync && Date.now() - S.lastSyncAt > 20000) runSync();
+    if (document.visibilityState === 'visible' && syncOn() && Date.now() - S.lastSyncAt > 20000) runSync();
   });
-  window.addEventListener('online', () => { if (S.sync) runSync(); });
-  setInterval(() => { if (document.visibilityState === 'visible' && S.sync && !syncing && Date.now() - S.lastSyncAt > 60000) runSync(); }, 30000);
+  window.addEventListener('online', () => { if (syncOn()) runSync(); });
+  setInterval(() => { if (document.visibilityState === 'visible' && syncOn() && !syncing && Date.now() - S.lastSyncAt > 60000) runSync(); }, 30000);
 
   if (await kvGet('setupDone')) { showMain(); return; }
   show(isIOS() && !isStandalone() ? 'install' : 'welcome');

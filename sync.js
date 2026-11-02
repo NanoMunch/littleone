@@ -254,6 +254,128 @@ export async function syncOnce(cfg, hooks) {
   return { pulled, pushed, devices: files.length };
 }
 
+// ---------- family helpers ----------
+// Grandparents and other family can add entries without seeing the parents' log.
+// - Their entries go to a separate private repository (the "family storage"), reached with a key that the
+//   parents create for that repository only. That key never reaches the parents' main storage.
+// - Each helper has their own random 256-bit key, made on a parent's phone and carried in their invite
+//   code. Their phone locks its entries with it and writes members/<helperId>/<deviceId>.json.
+// - Parents' phones keep every helper's key inside the parents' locked log, read the helpers' files, and
+//   copy the entries into the main log. Nothing from the main log is ever written to the family storage,
+//   so a helper can only ever read back what they logged themselves.
+
+export function newHelperKey() { return toB64(crypto.getRandomValues(new Uint8Array(32))); }
+
+export function makeHelperInvite(o) {
+  return 'LOF1-' + b64url(JSON.stringify({ r: o.repo, t: o.token, m: o.id, k: o.key, n: o.name, c: o.child || '', a: o.age || '' }));
+}
+export function readHelperInvite(code) {
+  const raw = String(code || '').replace(/\s+/g, '');
+  if (!/^LOF1-/.test(raw)) return null;
+  try {
+    const o = JSON.parse(unb64url(raw.slice(5)));
+    const repo = normaliseRepo(o.r); const key = fromB64(o.k || '');
+    if (repo && o.t && /^[a-f0-9]{8,40}$/.test(o.m || '') && key.length === 32) {
+      return { repo, token: o.t, id: o.m, keyRaw: key, name: String(o.n || '').slice(0, 40), child: String(o.c || '').slice(0, 40), age: String(o.a || '') };
+    }
+  } catch (e) { /* fall through */ }
+  return null;
+}
+export function inviteKind(code) {
+  const s = String(code || '').replace(/\s+/g, '');
+  if (/^LOF1-/.test(s)) return readHelperInvite(s) ? 'helper' : null;
+  return readInvite(s) ? 'partner' : null;
+}
+
+const FAMILY_MARK = 'about.json';
+// Parents: check the family storage is private and separate from the main storage, and that its key can't
+// reach the main storage. Then mark it as Little One's.
+export async function setupFamilyStorage(repo, token, mainRepo) {
+  if (mainRepo && repo.toLowerCase() === String(mainRepo).toLowerCase()) throw new SyncError('same', 'Use a different repository from your main storage, so family members can never reach your log.');
+  const gh = new GitHubStore(repo, token);
+  await checkRepo(gh);
+  if (mainRepo) {
+    const reach = await new GitHubStore(mainRepo, token).repoInfo();
+    if (reach) throw new SyncError('wide', `This key can also reach your main storage (${mainRepo}). Make a new key that can only reach ${repo}, so family members can't reach your log.`);
+  }
+  const mark = await gh.readJSON(FAMILY_MARK);
+  if (!mark) await gh.writeJSON(FAMILY_MARK, { app: 'littleone-family', v: 1, note: 'Locked entries from family helpers. Each helper can only unlock their own.' }, null, 'Set up family storage');
+  else if (!mark.json || mark.json.app !== 'littleone-family') throw new SyncError('notfamily', `${repo} already holds other files. Use a new, empty private repository for family helpers.`);
+  return true;
+}
+// Helpers: check the code still works before joining.
+export async function checkFamilyStorage(repo, token) {
+  const gh = new GitHubStore(repo, token);
+  const info = await gh.repoInfo();
+  if (!info) throw new SyncError('notfound', "This code can't reach the family storage any more. Ask for a new code.");
+  const mark = await gh.readJSON(FAMILY_MARK);
+  if (!mark || !mark.json || mark.json.app !== 'littleone-family') throw new SyncError('notfamily', "This code doesn't lead to a Little One family storage. Ask for a new code.");
+  return true;
+}
+
+// Helper phones: sync this helper's own entries between their devices, and publish them for the parents.
+export async function syncHelper(cfg, hooks) {
+  const gh = new GitHubStore(cfg.repo, cfg.token);
+  const key = await importAesKey(cfg.keyRaw);
+  const state = Object.assign({ shas: {}, mySha: null, lastHash: '' }, (await hooks.getState()) || {});
+  const dir = `members/${cfg.helperId}`; const myFile = `${cfg.deviceId}.json`;
+  const files = await gh.listDir(dir);
+  const newShas = {}; const payloads = []; let mySha = null;
+  for (const f of files) {
+    if (!/^[a-f0-9]+\.json$/.test(f.name)) continue;
+    if (f.name === myFile) { mySha = f.sha; continue; }
+    newShas[f.name] = f.sha;
+    if (state.shas[f.name] === f.sha) continue;
+    try {
+      const data = await decryptJSON(key, JSON.parse(await gh.getBlobText(f.sha)));
+      if (data && data.app === 'littleone-helper' && data.member === cfg.helperId) payloads.push(data);
+    } catch (e) { if (e instanceof SyncError) throw e; /* a file this helper's key can't unlock: skip it */ }
+  }
+  const pulled = payloads.length ? await hooks.merge(payloads) : 0;
+  const snap = await hooks.snapshot();
+  const entries = snap.entries.slice().sort((a, b) => (a.id < b.id ? -1 : 1));
+  const hash = await sha256Hex(JSON.stringify({ n: snap.name, e: entries }));
+  let pushed = false;
+  if (hash !== state.lastHash || !mySha) {
+    const box = await encryptJSON(key, { app: 'littleone-helper', v: 1, member: cfg.helperId, dev: cfg.deviceId, name: snap.name, at: Date.now(), entries });
+    try { mySha = await gh.writeJSON(`${dir}/${myFile}`, box, mySha, 'Sync'); } catch (e) {
+      if (e.code !== 'conflict') throw e;
+      const fresh = await gh.getFileMeta(`${dir}/${myFile}`);
+      mySha = await gh.writeJSON(`${dir}/${myFile}`, box, fresh ? fresh.sha : null, 'Sync');
+    }
+    pushed = true;
+  }
+  await hooks.setState({ shas: newShas, mySha, lastHash: hash, lastSyncAt: Date.now() });
+  return { pulled, pushed };
+}
+
+// Parent phones: read every current helper's files and hand their entries to hooks.merge(helperId, payload).
+// A file that can't be unlocked with that helper's key is skipped and reported, never trusted.
+export async function pullHelpers(cfg, hooks) {
+  const gh = new GitHubStore(cfg.repo, cfg.token);
+  const state = Object.assign({ shas: {}, bad: {} }, (await hooks.getState()) || {});
+  const newShas = {}; const bad = {}; const problems = []; let pulled = 0;
+  for (const h of cfg.helpers) {
+    let key;
+    try { key = await importAesKey(fromB64(h.key)); } catch (e) { problems.push(h.id); continue; }
+    const files = await gh.listDir(`members/${h.id}`);
+    for (const f of files) {
+      if (!/^[a-f0-9]+\.json$/.test(f.name)) continue;
+      const p = `${h.id}/${f.name}`; newShas[p] = f.sha;
+      if (state.bad[p] === f.sha) { bad[p] = f.sha; problems.push(h.id); continue; }
+      if (state.shas[p] === f.sha) continue;
+      let data = null;
+      try { data = await decryptJSON(key, JSON.parse(await gh.getBlobText(f.sha))); } catch (e) {
+        if (e instanceof SyncError) throw e; // network trouble: try again later
+      }
+      if (!data || data.app !== 'littleone-helper' || data.member !== h.id) { bad[p] = f.sha; problems.push(h.id); continue; }
+      pulled += await hooks.merge(h.id, data);
+    }
+  }
+  await hooks.setState({ shas: newShas, bad, lastSyncAt: Date.now() });
+  return { pulled, problems: Array.from(new Set(problems)) };
+}
+
 // ---------- backup files ----------
 export async function makeBackup(password, data) {
   const salt = crypto.getRandomValues(new Uint8Array(16));

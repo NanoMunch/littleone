@@ -547,9 +547,32 @@ a.btn { text-decoration: none; }
 .sheet-body > .scheck { border: 0; padding: 0; background: transparent; }
 
 /* ---------- family members ---------- */
-#app[data-role="helper"] .tabbar [data-tab="insights"], #app[data-role="helper"] .tabbar [data-tab="export"] { display: none; }
+#app[data-role="helper"] .tabbar [data-tab="insights"], #app[data-role="helper"] .tabbar [data-tab="export"], #app[data-role="helper"] .tabbar [data-tab="time"] { display: none; }
 .tag.src-family { background: var(--gold-bg); color: var(--gold); }
 .helper-row { align-items: center; }
 .helper-row > span:first-child { display: flex; flex-direction: column; gap: 2px; color: var(--ink); }
 .helper-row small { color: var(--muted); font-size: .78rem; }
 .helper-row .mini-links { flex: none; }
+
+/* ---------- care time (private to this phone) ---------- */
+.time-private { display: flex; gap: 10px; align-items: flex-start; background: var(--sage-bg); color: var(--sage); border-radius: 14px; padding: 11px 14px; font-size: .84rem; line-height: 1.45; margin-bottom: 12px; }
+.time-private svg { width: 18px; height: 18px; flex: none; margin-top: 1px; }
+.timer-card { text-align: center; }
+.timer-clock { font-family: var(--serif); font-size: 2.6rem; line-height: 1.1; color: var(--terracotta-ink); font-variant-numeric: tabular-nums lining-nums; margin: 4px 0 2px; }
+.timer-kind { color: var(--muted); font-size: .9rem; margin-bottom: 12px; }
+.timer-card .chips { justify-content: center; margin-bottom: 12px; }
+.timer-card .field { text-align: left; }
+.time-total { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+.time-total .stat b { font-size: 1.35rem; }
+.time-day { display: flex; justify-content: space-between; align-items: baseline; margin: 16px 2px 7px; }
+.time-day h3 { margin: 0; font-family: var(--serif); font-style: italic; font-weight: 400; color: var(--muted); font-size: .95rem; }
+.time-day span { font-size: .8rem; color: var(--muted); }
+.time-row { width: 100%; text-align: left; display: flex; justify-content: space-between; align-items: center; gap: 10px; background: var(--card); border: 1.5px solid var(--line); border-radius: 14px; padding: 10px 14px; margin-bottom: 7px; }
+.time-row b { font-family: var(--serif); font-weight: 400; font-size: 1.02rem; }
+.time-row small { display: block; color: var(--muted); font-size: .8rem; margin-top: 1px; overflow-wrap: anywhere; }
+.time-row .dur { font-variant-numeric: lining-nums; color: var(--terracotta-ink); font-weight: 500; white-space: nowrap; }
+.time-actions { display: grid; gap: 10px; margin-top: 14px; }
+.bars.time-bars .bar { grid-template-columns: 96px 1fr 70px; }
+.time-bars .n { text-align: right; white-space: nowrap; }
+.time-total .stat { padding: 12px 4px; }
+.time-total .stat b { font-size: 1.15rem; line-height: 1.15; }

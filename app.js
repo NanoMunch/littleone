@@ -3,7 +3,7 @@ import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standardUnits } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 
-export const APP_VERSION = '1.9.0';
+export const APP_VERSION = '1.10.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -268,6 +268,8 @@ const S = {
   hiddenItems: {},
   // Family members ("helpers") use the app with their own code: S.role 'helper', S.fam their storage and key.
   role: 'parent', fam: null, famErr: null, famSeen: {},
+  // Care time: a private record on this phone only. It is never added to the synced log or any sync file.
+  care: [], careRun: null, timeRange: '7',
 };
 const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date);
 const isHelper = () => S.role === 'helper';
@@ -329,6 +331,7 @@ function renderHeader() {
 
 function switchTab(tab) {
   if (isHelper() && tab !== 'log' && tab !== 'history') tab = 'log';
+  if (tab !== 'time') clearInterval(careTick);
   S.tab = tab;
   $$('.tabbar [data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
   $$('.tab-panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${tab}`));
@@ -339,6 +342,7 @@ function renderTab() {
   if (S.tab === 'history') renderHistory();
   else if (S.tab === 'insights') renderInsights();
   else if (S.tab === 'export') renderExport();
+  else if (S.tab === 'time') renderTime();
 }
 function renderDependent() { renderHeader(); renderTab(); }
 
@@ -2182,7 +2186,7 @@ function openBackup() {
           if (p1 !== p2) return showMsg(msg, 'warn', "The two passwords don't match.");
           setBusy(btn, true, 'Locking…');
           try {
-            const data = await Sync.makeBackup(p1, { app: 'littleone', v: 1, at: Date.now(), profile: S.profile, entries: Array.from(S.entries.values()) });
+            const data = await Sync.makeBackup(p1, { app: 'littleone', v: 1, at: Date.now(), profile: S.profile, entries: Array.from(S.entries.values()), care: S.care });
             file = new Blob([JSON.stringify(data)], { type: 'application/json' });
             $('#bk-msg', b).hidden = true;
             $('#bk-ready', b).innerHTML = `<div class="notice ok mt14"><b>Backup ready</b> (${live().length} entries). Save it somewhere safe, such as Files on your phone.</div><button type="button" class="btn dark block" data-act="bk-share">Share or save backup</button>`;
@@ -2213,10 +2217,146 @@ function openRestore() {
         try {
           let json; try { json = JSON.parse(await f.text()); } catch (e) { throw new Error("This file isn't a Little One backup."); }
           const data = await Sync.openBackup($('#rs-pass', b).value, json);
-          const n = await mergeRemote([{ app: 'littleone', dev: '', entries: data.entries, profile: data.profile }]);
+          let n = await mergeRemote([{ app: 'littleone', dev: '', entries: data.entries, profile: data.profile }]);
+          n += await mergeCare(data.care);
           scheduleSync(); closeSheet(); renderDependent();
           toast(n ? `Restored ${n} change${n > 1 ? 's' : ''}` : 'Everything in the backup was already here');
         } catch (e) { showMsg(msg, 'err', esc(e.message || String(e))); } finally { setBusy(btn, false); }
+      };
+    },
+  });
+}
+
+// ---------------------------------------------------------------- care time (private to this phone)
+// A private record of the time you spend looking after your child. It is stored only on this phone and is never
+// part of the synced log, so your partner and family members can't see it. It is included in backup files you make.
+const CARE_KINDS = [['hands', '🤲', 'Hands-on care'], ['settle', '🌙', 'Settling and night'], ['appt', '🩺', 'Appointments and travel'], ['admin', '📋', 'Admin and research'], ['other', '📝', 'Other']];
+const CARE_KIND = Object.fromEntries(CARE_KINDS.map(([k, em, l]) => [k, { em, label: l }]));
+let careTick = null;
+function cleanCare(list) {
+  const out = []; const seen = new Set();
+  for (const r of Array.isArray(list) ? list : []) {
+    if (!r || typeof r.id !== 'string' || seen.has(r.id)) continue;
+    const start = +r.start; const end = +r.end;
+    if (!(start > 0) || !(end > start) || end - start > 7 * 86400000) continue;
+    seen.add(r.id);
+    out.push({ id: r.id, start, end, kind: CARE_KIND[r.kind] ? r.kind : 'other', note: String(r.note || '').slice(0, 200), createdAt: +r.createdAt || start, updatedAt: +r.updatedAt || end });
+  }
+  return out;
+}
+function cleanRun(r) { return r && +r.start > 0 && +r.start <= Date.now() + 60000 ? { start: +r.start, kind: CARE_KIND[r.kind] ? r.kind : 'hands' } : null; }
+const saveCare = () => kvSet('care', S.care);
+async function mergeCare(list) {
+  let n = 0;
+  for (const r of cleanCare(list)) {
+    const cur = S.care.find((x) => x.id === r.id);
+    if (!cur) { S.care.push(r); n++; } else if (r.updatedAt > cur.updatedAt) { Object.assign(cur, r); n++; }
+  }
+  if (n) await saveCare();
+  return n;
+}
+const careMins = (r) => (r.end - r.start) / 60000;
+const careDur = (m) => (m < 1 ? '<1 min' : m < 60 ? `${Math.round(m)} min` : fmtDur(m));
+const msDate = (ms) => ymd(new Date(ms));
+const msHHMM = (ms) => { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const toMs = (date, hhmm) => { const [y, m, d] = date.split('-').map(Number); const t = /^(\d{1,2}):(\d{2})/.exec(hhmm || ''); return t ? new Date(y, m - 1, d, +t[1], +t[2]).getTime() : NaN; };
+const clock = (ms) => { const t = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(t / 3600)}:${pad(Math.floor(t / 60) % 60)}:${pad(t % 60)}`; };
+
+function renderTime() {
+  const box = $('#time-body'); const run = S.careRun;
+  const n = +S.timeRange; const from = addDays(today(), -(n - 1));
+  const list = S.care.filter((r) => msDate(r.start) >= from).sort((a, b) => b.start - a.start);
+  const total = list.reduce((s, r) => s + careMins(r), 0);
+  const byDay = new Map(); list.forEach((r) => { const d = msDate(r.start); byDay.set(d, [...(byDay.get(d) || []), r]); });
+  const byKind = CARE_KINDS.map(([k]) => [k, list.filter((r) => r.kind === k).reduce((s, r) => s + careMins(r), 0)]).filter(([, m]) => m > 0);
+  const maxK = Math.max(1, ...byKind.map(([, m]) => m));
+  const kindChips = (cur) => CARE_KINDS.map(([k, em, l]) => `<button type="button" class="chip solid" data-ckind="${k}" aria-pressed="${cur === k}"><span aria-hidden="true">${em}</span>${l}</button>`).join('');
+  const timer = run
+    ? `<div class="card timer-card"><span class="label">Timing now</span><div class="timer-clock" data-elapsed>${clock(Date.now() - run.start)}</div>
+        <div class="timer-kind">${CARE_KIND[run.kind].em} ${CARE_KIND[run.kind].label} · started ${esc(fmtTime(msHHMM(run.start)))}</div>
+        <div class="field"><label class="label" for="cr-note">Note (optional)</label><input class="input" id="cr-note" maxlength="200" autocomplete="off" placeholder="e.g. Settled after a story"></div>
+        <div class="btn-row"><button type="button" class="btn ghost" data-act="care-cancel">Discard</button><button type="button" class="btn primary" data-act="care-stop">Stop and save</button></div></div>`
+    : `<div class="card timer-card"><span class="label">What are you doing?</span><div class="chips" role="group">${kindChips(S.careKind || 'hands')}</div>
+        <button type="button" class="btn primary block" data-act="care-start">Start timing</button></div>`;
+  const days = Array.from(byDay.entries()).map(([d, rs]) => `<div class="time-day"><h3>${d === today() ? 'Today' : d === addDays(today(), -1) ? 'Yesterday' : esc(fmtDayLong(d))}</h3><span>${careDur(rs.reduce((s, r) => s + careMins(r), 0))}</span></div>`
+    + rs.map((r) => `<button type="button" class="time-row" data-care="${esc(r.id)}"><span><b>${CARE_KIND[r.kind].em} ${CARE_KIND[r.kind].label}</b><small>${esc(fmtTime(msHHMM(r.start)))} to ${esc(fmtTime(msHHMM(r.end)))}${msDate(r.end) !== d ? ' (next day)' : ''}${r.note ? ` · ${esc(r.note)}` : ''}</small></span><span class="dur">${careDur(careMins(r))}</span></button>`).join('')).join('');
+  box.innerHTML = `
+    <div class="time-private"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Only on this phone. Your partner and family can't see this, and it never syncs. It's included in backup files you make.</span></div>
+    ${timer}
+    <div class="chips mt10" id="time-range">${[['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days']].map(([k, l]) => `<button type="button" class="chip solid" data-trange="${k}" aria-pressed="${S.timeRange === k}">${l}</button>`).join('')}</div>
+    <div class="card mt10">
+      <div class="time-total"><div class="stat"><b>${total ? careDur(total) : '0'}</b><span>Total</span></div><div class="stat"><b>${total ? careDur(total / n) : '0'}</b><span>A day on average</span></div><div class="stat"><b>${byDay.size}</b><span>Days with time</span></div></div>
+      ${byKind.length ? `<div class="bars time-bars">${byKind.map(([k, m]) => `<div class="bar"><span>${CARE_KIND[k].em} ${({ hands: 'Hands-on', settle: 'Settling', appt: 'Visits', admin: 'Admin', other: 'Other' })[k]}</span><div class="track"><div class="fill" data-w="${Math.max(2, Math.round((m / maxK) * 100))}"></div></div><span class="n time-n">${careDur(m)}</span></div>`).join('')}</div>` : '<p class="hint">Start the timer, or add time you forgot to log. Totals appear here.</p>'}
+    </div>
+    <button type="button" class="btn dark block" data-act="care-add">Add time I forgot to log</button>
+    ${days}
+    <div class="time-actions">${S.care.length ? '<button type="button" class="btn ghost" data-act="care-csv">Save a spreadsheet (CSV) of everything</button>' : ''}</div>
+    <p class="hint mt14">Time that runs past midnight counts towards the day it started. Time is yours to define: add whatever counts as looking after your child.</p>`;
+  applySizes(box);
+  clearInterval(careTick);
+  if (run) careTick = setInterval(() => { const el = $('[data-elapsed]'); if (el && S.careRun) el.textContent = clock(Date.now() - S.careRun.start); }, 1000);
+  box.onclick = async (ev) => {
+    const b = ev.target.closest('button'); if (!b) return;
+    if (b.dataset.ckind) { S.careKind = b.dataset.ckind; renderTime(); }
+    else if (b.dataset.trange) { S.timeRange = b.dataset.trange; renderTime(); }
+    else if (b.dataset.act === 'care-start') { S.careRun = { start: Date.now(), kind: S.careKind || 'hands' }; await kvSet('careRun', S.careRun); renderTime(); }
+    else if (b.dataset.act === 'care-cancel') { S.careRun = null; await kvDel('careRun'); renderTime(); toast('Discarded'); }
+    else if (b.dataset.act === 'care-stop') {
+      const r = S.careRun; if (!r) return; const end = Date.now();
+      const item = { id: Sync.randomId(9), start: r.start, end: Math.max(end, r.start + 1000), kind: r.kind, note: ($('#cr-note', box).value || '').trim().slice(0, 200), createdAt: end, updatedAt: end };
+      S.care.push(item); S.careRun = null; await saveCare(); await kvDel('careRun'); renderTime();
+      toast(`Saved ${careDur(careMins(item))}`, { label: 'Undo', fn: async () => { S.care = S.care.filter((x) => x.id !== item.id); await saveCare(); renderTime(); } });
+    }
+    else if (b.dataset.act === 'care-add') openCareSheet(null);
+    else if (b.dataset.care) openCareSheet(S.care.find((x) => x.id === b.dataset.care));
+    else if (b.dataset.act === 'care-csv') {
+      const cell = (v) => { v = String(v ?? ''); if (/^[=+\-@\t\r]/.test(v)) v = "'" + v; return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
+      const rows = [['Date', 'Start', 'End', 'Minutes', 'Type', 'Note'], ...S.care.slice().sort((a, c) => a.start - c.start).map((r) => [msDate(r.start), msHHMM(r.start), msHHMM(r.end), Math.round(careMins(r)), CARE_KIND[r.kind].label, r.note])];
+      const ok = await shareFile(new Blob([rows.map((r) => r.map(cell).join(',')).join('\n')], { type: 'text/csv' }), `care-time-${today()}.csv`, 'text/csv');
+      if (ok) toast('Saved. This file isn\'t locked, so keep it somewhere private.');
+    }
+  };
+}
+
+function openCareSheet(item) {
+  const d0 = item ? msDate(item.start) : today();
+  let kind = item ? item.kind : 'hands';
+  openSheet(item ? 'Edit time' : 'Add time', `
+    <div class="row2 field">
+      <div><label class="label" for="ct-date">Date</label><input class="input" type="date" id="ct-date" max="${today()}" value="${esc(d0)}"></div>
+      <div></div>
+    </div>
+    <div class="row2 field">
+      <div><label class="label" for="ct-start">From</label><input class="input" type="time" id="ct-start" value="${item ? esc(msHHMM(item.start)) : ''}"></div>
+      <div><label class="label" for="ct-end">To</label><input class="input" type="time" id="ct-end" value="${item ? esc(msHHMM(item.end)) : ''}"></div>
+    </div>
+    <p class="hint">If it ends after midnight, just enter the later time. It will be counted as ending the next day.</p>
+    <div class="field"><span class="label">Type</span><div class="chips" data-kinds>${CARE_KINDS.map(([k, em, l]) => `<button type="button" class="chip solid" data-ckind="${k}" aria-pressed="${kind === k}"><span aria-hidden="true">${em}</span>${l}</button>`).join('')}</div></div>
+    <div class="field"><label class="label" for="ct-note">Note (optional)</label><input class="input" id="ct-note" maxlength="200" autocomplete="off" value="${esc(item ? item.note : '')}"></div>
+    <div id="ct-msg" hidden></div>
+    <button type="button" class="btn primary block" data-act="ct-save">${item ? 'Save changes' : 'Add'}</button>
+    ${item ? '<button type="button" class="btn danger block mt10" data-act="ct-del">Delete</button>' : ''}`, {
+    onMount: (b) => {
+      b.onclick = async (ev) => {
+        const btn = ev.target.closest('button'); if (!btn) return;
+        if (btn.dataset.ckind) { kind = btn.dataset.ckind; $$('[data-ckind]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === btn))); return; }
+        const msg = $('#ct-msg', b);
+        if (btn.dataset.act === 'ct-del' && item) {
+          S.care = S.care.filter((x) => x.id !== item.id); await saveCare(); closeSheet(); renderTime();
+          toast('Deleted', { label: 'Undo', fn: async () => { S.care.push(item); await saveCare(); renderTime(); } });
+        } else if (btn.dataset.act === 'ct-save') {
+          const date = $('#ct-date', b).value; const s = toMs(date, $('#ct-start', b).value); let e = toMs(date, $('#ct-end', b).value);
+          if (!date) return showMsg(msg, 'warn', 'Choose a date.');
+          if (date > today()) return showMsg(msg, 'warn', "The date can't be in the future.");
+          if (!isFinite(s) || !isFinite(e)) return showMsg(msg, 'warn', 'Add the start and end times.');
+          if (e <= s) e += 86400000;
+          if (e - s > 16 * 3600000) return showMsg(msg, 'warn', "That's over 16 hours. Check the times, or add it as separate blocks.");
+          if (e > Date.now() + 60000) return showMsg(msg, 'warn', "That ends in the future. Use the timer for time that's still going.");
+          const now = Date.now(); const note = $('#ct-note', b).value.trim().slice(0, 200);
+          if (item) Object.assign(item, { start: s, end: e, kind, note, updatedAt: now });
+          else S.care.push({ id: Sync.randomId(9), start: s, end: e, kind, note, createdAt: now, updatedAt: now });
+          await saveCare(); closeSheet(); renderTime(); toast(item ? 'Saved' : `Added ${careDur((e - s) / 60000)}`);
+        }
       };
     },
   });
@@ -2476,6 +2616,8 @@ async function init() {
   S.role = (await kvGet('role')) === 'helper' ? 'helper' : 'parent';
   S.fam = (await kvGet('fam')) || null;
   S.famSeen = (await kvGet('famSeen')) || {};
+  S.care = cleanCare(await kvGet('care'));
+  S.careRun = cleanRun(await kvGet('careRun'));
   const ss = await kvGet('syncState'); S.lastSyncAt = (ss && ss.lastSyncAt) || 0;
   (await getAllEntries()).forEach((e) => S.entries.set(e.id, e));
 

@@ -1,5 +1,5 @@
 {
-  "version": "1.9.0",
+  "version": "1.10.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -56,6 +56,10 @@
     {
       "date": "2026-11-02",
       "notes": "1.9.0 Family members: parents set up a separate private family storage (with a key that can't reach the main storage) and add people such as Grandma, each with their own code and encryption key. Family members choose Join as family, get Log and History only, and see only what they log. Their entries appear in the parents' log tagged with their name; parents' phones only accept each person's changes to their own entries, skip anything that can't be unlocked, and ignore removed people. History groups only combine entries from the same person."
+    },
+    {
+      "date": "2026-11-05",
+      "notes": "1.10.0 Time tab: a private record of the time you spend caring for your child. Start and stop a timer, or add time afterwards, by type; totals, daily average and a breakdown for 7, 30 or 90 days; edit, delete and CSV export. Stored only on the phone it is logged on: never synced, never shared with a partner or family member, and included in backup files."
     }
   ]
 }

@@ -3,7 +3,7 @@ import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standardUnits } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 
-export const APP_VERSION = '1.10.0';
+export const APP_VERSION = '1.10.1';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -333,6 +333,7 @@ function switchTab(tab) {
   if (isHelper() && tab !== 'log' && tab !== 'history') tab = 'log';
   if (tab !== 'time') clearInterval(careTick);
   S.tab = tab;
+  if (tab === 'log') refreshFormClock();
   $$('.tabbar [data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
   $$('.tab-panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${tab}`));
   renderTab();
@@ -697,7 +698,7 @@ function mountForm(el, entry, mode) {
     srcName: src === 'parent' ? (e.srcName || (mode === 'edit' ? e.by : '') || S.myName || 'Me') : src === 'family' ? (e.srcName || (isHelper() ? S.myName || 'Me' : '')) : '',
     sev: e.sev || 0,
     extra: { temp: e.temp || '', med: e.med || '', dose: e.dose || '', time: e.time || (mode === 'new' && !('time' in e) ? nowHHMM() : ''), awake: e.awake || '' },
-    timeTouched: mode === 'edit' || !!e.timeTouched,
+    timeTouched: mode === 'edit' || !!e.timeTouched, dateTouched: mode === 'edit' || !!e.dateTouched, mountDate: '', autoTime: '',
     results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name || '', value: r.value || '', unit: r.unit || '', low: r.low || '', high: r.high || '' })) : [],
     contents: Array.isArray(e.contents) ? e.contents.map((c) => ({ name: c.name || '', amount: c.amount || '' })) : [],
     product: e.product && PRODUCTS[e.product] ? e.product : '', units: e.units != null && e.units !== '' ? String(e.units) : '', productOff: false,
@@ -707,6 +708,8 @@ function mountForm(el, entry, mode) {
   };
   el._st = st;
   el.innerHTML = formHTML(st, e, mode);
+  st.mountDate = $('[data-f="date"]', el).value;
+  if (mode === 'new' && !st.timeTouched) st.autoTime = st.extra.time;
   $('[data-f="tod"]', el).value = st.extra.time ? todForTime(st.extra.time) : e.tod || currentTod();
   renderExtra(el); syncFormBits(el);
 
@@ -802,6 +805,7 @@ function mountForm(el, entry, mode) {
     const t = ev.target;
     const f = t.dataset.x; if (f) st.extra[f] = t.value;
     if (t.dataset.bi !== undefined && t.dataset.bf) { const b = st.batch[+t.dataset.bi]; if (b) b[t.dataset.bf] = t.value; }
+    if (t.dataset.f === 'date' && ev.isTrusted !== false) st.dateTouched = true;
     if (t.dataset.x === 'time') {
       if (ev.isTrusted !== false) st.timeTouched = true;
       if (t.value) { const tod = todForTime(t.value); if (tod) $('[data-f="tod"]', el).value = tod; }
@@ -855,7 +859,7 @@ function saveDraft(el) {
     const d = {
       date: $('[data-f="date"]', el).value, tod: $('[data-f="tod"]', el).value,
       title: $('[data-f="title"]', el).value, notes: $('[data-f="notes"]', el).value,
-      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, contents: st.contents, product: st.product, units: st.units, batch: st.batch, timeTouched: st.timeTouched, sleep: st.sleepKind, kindTouched: st.kindTouched, savedAt: Date.now(),
+      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, contents: st.contents, product: st.product, units: st.units, batch: st.batch, timeTouched: st.timeTouched, dateTouched: st.dateTouched, sleep: st.sleepKind, kindTouched: st.kindTouched, savedAt: Date.now(),
     };
     if (d.title || d.notes || d.cat) kvSet('draft', d).catch(() => {}); else kvDel('draft').catch(() => {});
   }, 400);
@@ -866,10 +870,40 @@ async function mountLogForm() {
   let draft = null;
   try { draft = await kvGet('draft'); } catch (e) { /* ignore */ }
   if (draft && Date.now() - (draft.savedAt || 0) > 3 * 86400000) draft = null;
+  // A draft that still has its automatic date and time is out of date once some time has passed.
+  if (draft && !draft.timeTouched && !draft.dateTouched && Date.now() - (draft.savedAt || 0) > 10 * 60000) { delete draft.time; delete draft.date; delete draft.tod; }
   mountForm(el, draft, 'new');
 }
 
+// The fields on screen are the truth when saving: take whatever time and date are showing, even if the phone
+// didn't send an event for them (iOS pickers can save before they report a change). A time that was only
+// filled in automatically is dropped when the entry is for an earlier day, so it can't pass as "now".
+function settleClock(el) {
+  const st = el._st; if (!st || st.mode !== 'new') return;
+  const tf = $('[data-x="time"]', el); const df = $('[data-f="date"]', el);
+  if (tf && tf.value !== (st.extra.time || '')) st.extra.time = tf.value;
+  if (tf && !st.timeTouched && tf.value !== (st.autoTime || '')) st.timeTouched = true;
+  if (df && df.value && df.value !== st.mountDate) st.dateTouched = true;
+  if (!st.timeTouched && st.extra.time && df && df.value && df.value !== today()) { st.extra.time = ''; if (tf) tf.value = ''; }
+}
+// Back in the app after a while: an untouched form moves to the current date and time.
+function refreshFormClock() {
+  const el = $('#log-form'); const st = el && el._st;
+  if (!st || st.mode !== 'new' || st.timeTouched || st.dateTouched) return;
+  const df = $('[data-f="date"]', el);
+  if ($('[data-f="title"]', el).value || $('[data-f="notes"]', el).value) return;
+  if (df.value !== today() || (st.extra.time && st.extra.time !== nowHHMM())) {
+    df.value = today(); df.max = today(); st.mountDate = df.value;
+    if (st.extra.time) { st.extra.time = nowHHMM(); st.autoTime = st.extra.time; const tf = $('[data-x="time"]', el); if (tf) tf.value = st.extra.time; }
+    const tod = st.extra.time ? todForTime(st.extra.time) : currentTod();
+    if (tod) $('[data-f="tod"]', el).value = tod;
+    if (st.cat === 'sleep' && !st.kindTouched) autoSleepKind(el);
+    syncTimeBits(el);
+  }
+}
+
 async function saveForm(el) {
+  settleClock(el);
   const st = el._st;
   const val = (f) => $(`[data-f="${f}"]`, el).value;
   const title = val('title').trim(); const notes = val('notes').trim();
@@ -932,6 +966,7 @@ async function saveForm(el) {
 }
 
 async function saveBatch(el) {
+  settleClock(el);
   const st = el._st; const val = (f) => $(`[data-f="${f}"]`, el).value;
   const date = val('date');
   if (!date) { toast('Choose a date'); return; }
@@ -2644,6 +2679,8 @@ async function init() {
   $('#search').oninput = (ev) => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { S.hist.q = ev.target.value; S.hist.limit = 60; renderHistory(); }, 150); };
   $('#install-skip').onclick = () => show('welcome');
 
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshFormClock(); });
+  window.addEventListener('pageshow', refreshFormClock);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && syncOn() && Date.now() - S.lastSyncAt > 20000) runSync();
   });

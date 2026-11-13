@@ -1,5 +1,5 @@
 {
-  "version": "1.18.0",
+  "version": "1.19.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -96,6 +96,10 @@
     {
       "date": "2026-11-13",
       "notes": "1.18.0 Screen time: quick minutes, a timer you can pause and resume, or a start and end time, by type (shows, games and apps, learning, video calls). Gentle in-app reminders as the day nears and passes the guideline for your child's age. Video calls aren't counted. 14-day chart and type split in Insights. Shared with everyone."
+    },
+    {
+      "date": "2026-11-14",
+      "notes": "1.19.0 Refresh button in the header, and pull down from the top to refresh: checks for a new version, syncs, and updates the time and cards. Saved entries now say what time and day they were saved for. The 'Log a night wake-up now' button now uses the date and time you set on the form instead of always using right now. The 'no food logged since' note no longer shows in the evening or after bedtime."
     }
   ]
 }

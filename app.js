@@ -5,7 +5,7 @@ import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.18.0';
+export const APP_VERSION = '1.19.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -673,7 +673,9 @@ export function outlook(all, nights, ratings, todayStr, nowHour, tagMap = new Ma
   if (yd != null && yd >= 2.5) { reasons.push(`Yesterday was rated ${dayFeelWord(yd)}.`); tips.add('Starting with 10 minutes of one-on-one time before the first request can help the day get going.'); }
   // Food: only when eating is logged regularly, so no logging doesn't read as no eating.
   const eat = all.filter((e) => e.cat === 'eating' && e.date >= addDays(todayStr, -14));
-  if (new Set(eat.map((e) => e.date)).size >= 4 && nowHour >= 11) {
+  // Not in the evening, and not once bedtime has been logged: the gap since dinner isn't a sign of hunger then.
+  const bedtimeDone = all.some((e) => e.cat === 'sleep' && e.sleep === 'bed' && e.date === todayStr && (e.time || '') >= '17:00');
+  if (new Set(eat.map((e) => e.date)).size >= 4 && nowHour >= 11 && nowHour < 19 && !bedtimeDone) {
     const t = eat.filter((e) => e.date === todayStr && e.time).map((e) => e.time).sort().pop();
     const anyToday = eat.some((e) => e.date === todayStr);
     const lastMin = t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : null;
@@ -914,7 +916,7 @@ function renderExtra(el) {
   else if (st.cat === 'sleep') {
     const k = st.sleepKind;
     const quick = st.mode === 'new' ? `<button type="button" class="btn dark block quick-wake" data-act="quick-wake"><span aria-hidden="true">🌙</span> Log a night wake-up now</button>
-      <p class="hint quick-hint">One tap saves a ${QUICK_AWAKE} minute wake-up at the current time. Tap it in History to change the details.</p>` : '';
+      <p class="hint quick-hint">One tap saves a ${QUICK_AWAKE} minute wake-up at the current time, or at the date and time you set on this form. Tap it in History to change the details.</p>` : '';
     const hint = { bed: "Pairs with the next wake-up to work out the night's sleep.", wake: "Pairs with last night's sleep time to work out how long they slept.", waking: "Time awake is taken off the night's total." }[k];
     html = `${quick}<span class="label">${quick ? 'Or choose what this entry is' : 'This entry is'}</span>
       <div class="chips">${SLEEP_KINDS.map(([v, em, l]) => `<button type="button" class="chip solid" data-kind="${v}" aria-pressed="${k === v}"><span aria-hidden="true">${em}</span>${l}</button>`).join('')}</div>
@@ -1401,6 +1403,11 @@ function refreshFormClock() {
   }
 }
 
+// Say when an entry was saved for, so a wrong time or date shows straight away.
+function savedWhen(date, time) {
+  const day = date === today() ? '' : date === addDays(today(), -1) ? ' for yesterday' : ` for ${fmtDayShort(date)}`;
+  return time ? `${day || ' for today'} at ${fmtTime(time)}` : day;
+}
 async function saveForm(el) {
   settleClock(el);
   const st = el._st;
@@ -1466,7 +1473,7 @@ async function saveForm(el) {
     clearTimeout(draftTimer); await kvDel('draft').catch(() => {});
     mountForm(el, null, 'new');
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    toast('Entry saved', { label: 'View', fn: () => switchTab('history') });
+    toast(`Entry saved${savedWhen(date, e.time)}`, { label: 'View', fn: () => switchTab('history') });
   }
 }
 
@@ -1507,7 +1514,7 @@ async function saveBatch(el) {
   mountForm(el, null, 'new');
   window.scrollTo({ top: 0, behavior: 'smooth' });
   renderDependent();
-  toast(`${list.length} ${word} saved`, {
+  toast(`${list.length} ${word} saved${savedWhen(date, time)}`, {
     label: 'Undo',
     fn: async () => {
       const tombs = list.map((e) => ({ id: e.id, deleted: true, updatedAt: Date.now(), by: S.myName || '' }));
@@ -1517,10 +1524,16 @@ async function saveBatch(el) {
 }
 
 async function quickWake(el) {
+  // Uses the date and time on the form if they were changed (a wake-up logged from memory), otherwise right now.
+  settleClock(el); const st = el._st; const df = $('[data-f="date"]', el);
+  const date = st.dateTouched && df && df.value ? df.value : today();
+  if (date > today()) { toast("The date can't be in the future"); return; }
+  let time = st.timeTouched && st.extra.time ? st.extra.time : (date === today() ? nowHHMM() : '');
+  if (!time) { toast('Add the time of the wake-up first'); const tf = $('[data-x="time"]', el); if (tf) tf.focus(); return; }
   const now = Date.now();
   const e = {
     id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId,
-    date: today(), tod: currentTod(), time: nowHHMM(), cat: 'sleep', sleep: 'waking', awake: QUICK_AWAKE,
+    date, tod: todForTime(time) || currentTod(), time, cat: 'sleep', sleep: 'waking', awake: QUICK_AWAKE,
     src: homeSrc(), srcName: S.myName || 'Me', title: '', notes: '', sev: 0,
   };
   S.entries.set(e.id, e);
@@ -1530,7 +1543,7 @@ async function quickWake(el) {
   mountForm(el, null, 'new');
   window.scrollTo({ top: 0, behavior: 'smooth' });
   renderDependent();
-  toast(`Night wake-up logged at ${fmtTime(e.time)}`, {
+  toast(`Night wake-up logged${savedWhen(e.date, e.time)}`, {
     label: 'Undo',
     fn: async () => {
       const tomb = { id: e.id, deleted: true, updatedAt: Date.now(), by: S.myName || '' };
@@ -3351,9 +3364,11 @@ async function openHelperSettings() {
 
 // ---------------------------------------------------------------- update banner (service worker)
 let updateRequested = false;
+let swReg = null;
 function registerSW() {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.register('sw.js').then((reg) => {
+    swReg = reg;
     const offer = (w) => {
       if (!w || !navigator.serviceWorker.controller) return;
       const slot = $('#update-banner-slot');
@@ -3368,6 +3383,36 @@ function registerSW() {
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
   }).catch((e) => console.warn('sw', e));
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (updateRequested) location.reload(); });
+}
+
+// ---------------------------------------------------------------- refresh
+// Check for a new version, sync with your partner, and bring the screen up to date (time, banner, cards).
+let refreshing = false;
+async function refreshApp() {
+  if (refreshing) return; refreshing = true;
+  const btn = $('#refresh-btn'); if (btn) btn.classList.add('spin');
+  try {
+    let update = false;
+    if (swReg) { try { await swReg.update(); update = !!(swReg.waiting || swReg.installing); } catch (e) { /* offline */ } }
+    let synced = false;
+    if (syncOn()) synced = !!(await runSync());
+    refreshFormClock(); renderDependent();
+    if (update) toast('A new version is ready. Tap Update at the top of the Log tab.');
+    else toast(syncOn() ? (synced ? 'Refreshed and synced' : 'Refreshed. Sync didn\'t finish, check your connection.') : 'Refreshed');
+  } finally { refreshing = false; if (btn) btn.classList.remove('spin'); }
+}
+// Pull down from the top of the screen to refresh.
+function setupPullToRefresh() {
+  let y0 = null; let pulled = 0; const ptr = $('#ptr');
+  const reset = () => { y0 = null; pulled = 0; if (ptr) { ptr.classList.remove('show', 'ready'); } };
+  document.addEventListener('touchstart', (ev) => { y0 = window.scrollY <= 0 && ev.touches.length === 1 && !$('#sheet-wrap').classList.contains('open') ? ev.touches[0].clientY : null; pulled = 0; }, { passive: true });
+  document.addEventListener('touchmove', (ev) => {
+    if (y0 == null) return; pulled = ev.touches[0].clientY - y0;
+    if (window.scrollY > 0 || pulled < 12) { if (ptr) ptr.classList.remove('show', 'ready'); return; }
+    if (ptr) { ptr.classList.add('show'); ptr.classList.toggle('ready', pulled > 90); ptr.textContent = pulled > 90 ? 'Release to refresh' : 'Pull to refresh'; }
+  }, { passive: true });
+  document.addEventListener('touchend', () => { const go = y0 != null && pulled > 90; reset(); if (go) refreshApp(); }, { passive: true });
+  document.addEventListener('touchcancel', reset, { passive: true });
 }
 
 // ---------------------------------------------------------------- boot
@@ -3404,6 +3449,8 @@ async function init() {
   document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && $('#sheet-wrap').classList.contains('open')) closeSheet(); });
   $$('.tabbar [data-tab]').forEach((b) => { b.onclick = () => switchTab(b.dataset.tab); });
   $('#open-settings').onclick = openSettings;
+  $('#refresh-btn').onclick = refreshApp;
+  setupPullToRefresh();
   $('#sync-pill').onclick = async () => {
     if (!syncOn()) { openSettings(); return; }
     if (S.syncStatus === 'error') { openSettings(); return; }

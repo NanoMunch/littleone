@@ -629,3 +629,9 @@ a.btn { text-decoration: none; }
 .act-prog .bar { display: block; }
 .bar .fill.over { background: var(--lavender); }
 .scr-note { margin-top: 10px; }
+.ptr { position: fixed; top: 8px; left: 50%; transform: translate(-50%, -60px); z-index: 40; background: var(--ink, #3d2d22); color: #fff; padding: 6px 14px; border-radius: 999px; font-size: .85rem; opacity: 0; transition: transform .15s, opacity .15s; pointer-events: none; }
+.ptr.show { transform: translate(-50%, 0); opacity: .95; }
+.ptr.ready { background: var(--terracotta); }
+#refresh-btn.spin svg { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #refresh-btn.spin svg { animation: none; } }

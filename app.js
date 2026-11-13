@@ -3,10 +3,12 @@ import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standardUnits } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 import { WHAT, WHY, REPAIR, CUP, CUP_TAGS, SUPPORT, tipsFor, cupTips, momentSummary, childLink, cupLink } from './me.js';
+import { EFFECTS, DAY_NAMES, cleanPlans, mergePlans, activeOn, isPrn, doseId, todayRows, adherence, changePoints, beforeAfter, missedLink, effectCounts } from './meds.js';
+import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.20.0';
+export const APP_VERSION = '1.21.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -276,7 +278,7 @@ const S = {
   // Care time: a private record on this phone only. It is never added to the synced log or any sync file.
   care: [], careRun: null, actRun: null, scrRun: null, me: [], meView: 'checkin', timeRange: '7',
 };
-const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'activity' && e.cat !== 'screen' && e.cat !== 'feedback');
+const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'activity' && e.cat !== 'screen' && e.cat !== 'feedback' && e.cat !== 'meddose' && e.cat !== 'sidefx');
 
 // ---------------------------------------------------------------- height and weight
 // Height in centimetres and weight in kilograms, as typed ("104.5", "104,5", "17.2 kg"). Returns NaN when
@@ -650,7 +652,7 @@ export function tagStats(ratings, tagMap) {
 // ---------------------------------------------------------------- today's outlook
 // A plain-rules heads-up at the top of the Log tab. It only uses what has been logged, compares with this
 // child's own recent sleep, and always lists its reasons. It never predicts; it says "may".
-export function outlook(all, nights, ratings, todayStr, nowHour, tagMap = new Map()) {
+export function outlook(all, nights, ratings, todayStr, nowHour, tagMap = new Map(), meds = {}) {
   const reasons = []; const tips = new Set();
   const byWake = new Map(nights.map((n) => [n.wakeDate, n]));
   const base = nights.filter((n) => n.wakeDate < todayStr && n.wakeDate >= addDays(todayStr, -15));
@@ -683,6 +685,8 @@ export function outlook(all, nights, ratings, todayStr, nowHour, tagMap = new Ma
     if (!anyToday) { reasons.push('No food logged yet today.'); tips.add('A snack soon could help, and low energy can make requests harder.'); }
     else if (lastMin != null && nowHour * 60 - lastMin >= 240) { reasons.push(`No food logged since ${fmtTime(t)}.`); tips.add('A snack soon could help, and low energy can make requests harder.'); }
   }
+  if (meds.missed) { reasons.push(meds.missed === 1 ? 'A dose was missed today.' : 'Doses were missed today.'); tips.add('Noting how the day goes helps show whether it made a difference.'); }
+  else if (meds.late) reasons.push('A dose was given late today.');
   const tt = tagMap.get(todayStr) || new Set();
   if (tt.has('unwell')) { reasons.push('Marked unwell today.'); tips.add('Unwell days are usually harder. Keeping requests few and simple can help.'); strong = true; }
   if (tt.has('changed')) { reasons.push('Routine changed today.'); tips.add('Extra warning before each switch can help when the routine is different.'); }
@@ -696,7 +700,7 @@ function renderOutlook() {
   const off = !!(S.outlook && S.outlook.off) || (S.outlook && S.outlook.hideDay === today());
   if (isHelper() || off) { box.innerHTML = ''; return; }
   const all = live();
-  const o = outlook(all, sleepNights(all), dayRatings(dayfeelEntries()), today(), new Date().getHours(), dayTagMap(tagSource()));
+  const o = outlook(all, sleepNights(all), dayRatings(dayfeelEntries()), today(), new Date().getHours(), dayTagMap(tagSource()), { missed: medDoses().filter((d) => d.date === today() && d.status === 'missed').length, late: medDoses().filter((d) => d.date === today() && d.status === 'late').length });
   if (!o) { box.innerHTML = ''; return; }
   box.innerHTML = `<div class="card outlook ${o.level}" role="region" aria-label="Today's outlook">
     <h3 class="card-title">${o.level === 'harder' ? 'Today may be a bit harder' : 'Worth knowing today'}</h3>
@@ -793,6 +797,7 @@ function showMain(opts = {}) {
   renderDayCard();
   renderActivityCard();
   renderScreenCard();
+  renderMedsCard();
   renderOutlook();
   mountLogForm();
   switchTab(S.tab);
@@ -822,7 +827,7 @@ function renderTab() {
   else if (S.tab === 'export') renderExport();
   else if (S.tab === 'time') renderTime();
 }
-function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderActivityCard(); renderScreenCard(); renderOutlook(); }
+function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderActivityCard(); renderScreenCard(); renderMedsCard(); renderOutlook(); }
 
 // ---------------------------------------------------------------- entry form
 // ---- people (shared): partner, carers, family. Stored in the shared profile so every phone sees the same list.
@@ -2159,7 +2164,7 @@ function renderInsights() {
   const all = live();
   const list = S.insightRange === 'all' ? all : rangeFilter(all, addDays(today(), -(+S.insightRange - 1)), today());
   const box = $('#insights');
-  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + activityInsightHTML() + screenInsightHTML() + dayFeelCardHTML(all) + growthCardHTML(all) + labCardHTML(all);
+  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + activityInsightHTML() + screenInsightHTML() + medsInsightHTML() + dayFeelCardHTML(all) + growthCardHTML(all) + labCardHTML(all);
   box.onclick = (ev) => {
     const cd = ev.target.closest('[data-check-day]'); if (cd) { openDayCheck(cd.dataset.checkDay); return; }
     const sh = ev.target.closest('[data-night]');
@@ -2525,15 +2530,20 @@ async function mergeRemote(payloads) {
       if (!l || newer(r, l)) { S.entries.set(r.id, r); put.push(r); changed++; }
     }
     if (p.profile && (p.profile.updatedAt || 0) > (S.profile.updatedAt || 0)) {
-      const fam = S.profile.family; const ppl = S.profile.people;
+      const fam = S.profile.family; const ppl = S.profile.people; const mds = S.profile.meds;
       S.profile = { childName: String(p.profile.childName || ''), updatedAt: p.profile.updatedAt };
       if (fam) S.profile.family = fam;
       if (ppl) S.profile.people = ppl;
+      if (mds) S.profile.meds = mds;
       if (['3-5', '5-13', 'off'].includes(p.profile.sleepGuide)) S.profile.sleepGuide = p.profile.sleepGuide;
       if (AGE_GROUPS[p.profile.nrvAge]) S.profile.nrvAge = p.profile.nrvAge;
       if (p.profile.childSex === 'girl' || p.profile.childSex === 'boy') S.profile.childSex = p.profile.childSex;
       if (/^\d{4}-(0[1-9]|1[0-2])$/.test(p.profile.childBirth || '')) S.profile.childBirth = p.profile.childBirth;
       await kvSet('profile', S.profile); changed++;
+    }
+    if (p.profile && p.profile.meds && !isHelper()) {
+      const mm = mergePlans(S.profile.meds, p.profile.meds);
+      if (JSON.stringify(mm) !== JSON.stringify(cleanPlans(S.profile.meds))) { S.profile = { ...S.profile, meds: mm }; await kvSet('profile', S.profile); changed++; }
     }
     if (p.profile && p.profile.people && !isHelper()) {
       const mp = mergePeople(S.profile.people, p.profile.people);
@@ -2785,6 +2795,7 @@ async function openSettings() {
       `}
     </div>
     ${peopleSectionHTML()}
+    <div class="set-section"><h3>Medicines</h3><p class="hint intro">A daily plan with one-tap Taken, Late and Missed, shared with everyone using this log.</p><div class="btn-stack"><button type="button" class="btn dark" data-act="med-manage">${Object.keys(medPlans()).length ? 'Manage medicines' : 'Add a medicine'}</button></div></div>
     <div class="set-section"><h3>Feedback</h3><p class="hint intro">Tell us what works and what doesn't. ${S.sync ? 'Feedback from your phones is kept together here.' : ''}</p><div class="btn-stack"><button type="button" class="btn dark" data-act="fb-open">Send feedback</button>${S.sync ? `<button type="button" class="btn ghost" data-act="fb-list">See feedback (${feedbackEntries().length})</button>` : ''}</div></div>
     ${S.sync ? familySectionHTML() : ''}
     <div class="set-section">
@@ -2835,6 +2846,7 @@ async function openSettings() {
         else if (a === 'st-join') openJoin(false);
         else if (a === 'st-backup') openBackup();
         else if (a === 'st-restore') openRestore();
+        else if (a === 'med-manage') openMedManage();
         else if (a === 'fb-open') openFeedback();
         else if (a === 'fb-list') openFeedbackList();
         else if (a === 'ppl-add') openPersonSheet(null, btn.dataset.name || '');
@@ -3292,6 +3304,134 @@ function openFeedbackList() {
     },
   });
 }
+
+// ---------------------------------------------------------------- medicines (shared)
+// The plan (names, doses, times) lives in the shared profile so every parent sees the same list. Each dose is a small synced entry
+// (cat 'meddose') with a fixed id, so two phones marking the same dose end up with one record. Side-effect notes are 'sidefx' entries.
+// These stay out of History and the PDF. The app records and shows patterns; it never advises on changing a medicine.
+const medPlans = () => cleanPlans(S.profile.meds);
+const medDoses = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.cat === 'meddose' && e.planId && e.date && e.slot);
+const sidefxEntries = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.cat === 'sidefx' && e.date && Array.isArray(e.effects));
+async function savePlans(map) { S.profile = { ...S.profile, meds: cleanPlans(map), updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(300); }
+async function setDose(planId, date, slot, status) {
+  const id = doseId(planId, date, slot); const cur = S.entries.get(id); const now = Date.now();
+  if (cur && !cur.deleted && cur.status === status) { await saveActivity({ id, deleted: true, updatedAt: now, by: S.myName || '' }); return; }
+  await saveActivity({ id, createdAt: cur && cur.createdAt ? cur.createdAt : now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, cat: 'meddose', planId, date, slot, status, takenAt: status === 'missed' ? '' : nowHHMM(), tod: todForTime(slot) || 'Morning', title: '', notes: '', sev: 0, src: 'parent', srcName: S.myName || 'Me' });
+}
+const nowMin = () => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); };
+export function renderMedsCard() {
+  const box = $('#meds-card'); if (!box) return;
+  if (isHelper()) { box.innerHTML = ''; return; }
+  const t = today(); const plans = medPlans(); const active = Object.fromEntries(Object.entries(plans).filter(([, p]) => activeOn(p, t)));
+  if (!Object.keys(active).length) { box.innerHTML = ''; return; }
+  const doses = medDoses(); const rows = todayRows(active, doses.filter((d) => d.date === t), t, nowMin());
+  const prn = Object.entries(active).filter(([, p]) => isPrn(p));
+  const stat = [['taken', 'Taken'], ['late', 'Late'], ['missed', 'Missed']];
+  const rowHTML = rows.map((r) => `<div class="med-row"><div class="med-name"><b>💊 ${esc(r.plan.name)}</b><small>${esc([r.plan.dose, fmtTime(r.slot)].filter(Boolean).join(' · '))}${r.overdue ? ` · due ${r.overdue >= 60 ? fmtDur(r.overdue) : `${r.overdue} min`} ago` : ''}</small>${r.dose ? `<small>${r.status === 'missed' ? 'Missed' : r.status === 'late' ? 'Given late' : 'Taken'}${r.dose.takenAt ? ` at ${esc(fmtTime(r.dose.takenAt))}` : ''} · ${esc(r.dose.srcName || r.dose.by || '')}</small>` : ''}</div>
+    <div class="act-btns">${stat.map(([k, l]) => `<button type="button" class="chip" data-dose="${esc(r.id)}|${r.slot}|${k}" aria-pressed="${r.status === k}">${l}</button>`).join('')}</div></div>`).join('');
+  const prnHTML = prn.map(([id, p]) => { const given = doses.filter((d) => d.planId === id && d.date === t).sort((a, b) => (a.takenAt || '').localeCompare(b.takenAt || '')); return `<div class="med-row"><div class="med-name"><b>💊 ${esc(p.name)}</b><small>${esc([p.dose, 'as needed'].filter(Boolean).join(' · '))}${given.length ? ` · given ${given.length} time${given.length === 1 ? '' : 's'} today, last at ${esc(fmtTime(given[given.length - 1].takenAt || given[given.length - 1].slot))}` : ''}</small></div><div class="act-btns"><button type="button" class="chip" data-prn="${esc(id)}">Give now</button></div></div>`; }).join('');
+  const off = rows.filter((r) => r.status === 'missed').length; const late = rows.filter((r) => r.status === 'late').length;
+  box.innerHTML = `<div class="card act-card"><h3 class="card-title">Medicines today</h3>${rowHTML}${prnHTML}
+    ${off ? '<p class="hint">A dose was missed. Noting how the day goes helps show whether it made a difference.</p>' : late ? '<p class="hint">A dose was given late today.</p>' : ''}
+    <div class="act-btns mt10"><button type="button" class="chip" data-act="med-effect">Note an effect</button><button type="button" class="chip" data-act="med-manage">Manage medicines</button></div></div>`;
+  box.onclick = async (ev) => {
+    const b = ev.target.closest('button'); if (!b) return;
+    const refresh = () => { renderMedsCard(); renderOutlook(); if (S.tab === 'insights') renderInsights(); };
+    if (b.dataset.dose) { const [id, slot, st] = b.dataset.dose.split('|'); await setDose(id, today(), slot, st); refresh(); }
+    else if (b.dataset.prn) { await setDose(b.dataset.prn, today(), nowHHMM(), 'taken'); refresh(); toast('Dose logged'); }
+    else if (b.dataset.act === 'med-effect') openEffectSheet();
+    else if (b.dataset.act === 'med-manage') openMedManage();
+  };
+}
+function openMedManage() {
+  const plans = Object.entries(medPlans()).filter(([, p]) => !p.removed).sort((a, b) => a[1].name.localeCompare(b[1].name)); const t = today();
+  openSheet('Medicines', `${plans.length ? `<div class="card kv-card">${plans.map(([id, p]) => `<div class="kv helper-row"><span><b>${esc(p.name)}</b><small>${esc([p.dose, p.times.length ? p.times.map(fmtTime).join(', ') : 'as needed', p.end && p.end < t ? `stopped ${fmtDayShort(p.end)}` : ''].filter(Boolean).join(' · '))}</small>${listedHTML(p.name)}</span><span class="mini-links"><button type="button" data-medit="${esc(id)}">Edit</button></span></div>`).join('')}</div>` : '<p class="hint">No medicines yet.</p>'}
+    <button type="button" class="btn dark block mt10" data-act="med-add">Add a medicine</button>
+    <p class="hint">Shared with everyone using this log. Little One records and shows patterns. It doesn't give advice about starting, stopping or changing a medicine. Talk to the prescriber about that.</p>`, {
+    onMount: (b) => { b.onclick = (ev) => { const x = ev.target.closest('button'); if (!x) return; if (x.dataset.medit) openMedSheet(x.dataset.medit); else if (x.dataset.act === 'med-add') openMedSheet(null); }; },
+  });
+}
+function listedHTML(name) {
+  const m = listedFor(name); if (!m) return '';
+  return `<details class="med-listed"><summary>Listed possible effects</summary><small>${esc(m.effects.join(', '))}. From ${m.url ? `<a href="${esc(m.url)}" target="_blank" rel="noopener noreferrer">${esc(m.source)}</a>` : esc(m.source)}. This is what the source lists, not a sign it is happening.${m.timing ? ` ${esc(m.timing)}` : ''}</small></details>`;
+}
+function openMedSheet(id) {
+  const plans = medPlans(); const cur = id ? plans[id] : null; let days = cur ? cur.days.slice() : [];
+  const timeInputs = [0, 1, 2, 3].map((i) => `<input class="input" type="time" id="mp-t${i}" aria-label="Time ${i + 1}" value="${esc(cur && cur.times[i] ? cur.times[i] : '')}">`).join('');
+  openSheet(cur ? 'Edit medicine' : 'Add a medicine', `
+    <div class="field"><label class="label" for="mp-name">Medicine</label><input class="input" id="mp-name" maxlength="60" autocomplete="off" placeholder="e.g. Melatonin" value="${esc(cur ? cur.name : '')}"></div>
+    <div class="field"><label class="label" for="mp-dose">Dose</label><input class="input" id="mp-dose" maxlength="60" autocomplete="off" placeholder="e.g. 2 mg" value="${esc(cur ? cur.dose : '')}"></div>
+    ${cur ? `<div class="field" id="mp-changewrap"><label class="label" for="mp-changed">If the dose changed, from</label><input class="input" type="date" id="mp-changed" max="${today()}" value="${today()}"><p class="hint">Used only when you change the dose above. The change is marked on your charts.</p></div>` : ''}
+    <div class="field"><span class="label">Times each day</span><div class="row2 time-grid">${timeInputs}</div><p class="hint">Leave all blank for "as needed".</p></div>
+    <div class="field"><span class="label">Days</span><div class="chips" data-mdays>${[1, 2, 3, 4, 5, 6, 0].map((d) => `<button type="button" class="chip" data-mday="${d}" aria-pressed="${days.includes(d)}">${DAY_NAMES[d]}</button>`).join('')}</div><p class="hint">Leave all unselected for every day.</p></div>
+    <div class="field"><label class="label" for="mp-start">Started on</label><input class="input" type="date" id="mp-start" max="${today()}" value="${esc(cur ? cur.start : today())}"></div>
+    <div class="field"><label class="label" for="mp-notes">Notes (optional)</label><input class="input" id="mp-notes" maxlength="200" autocomplete="off" placeholder="e.g. with food" value="${esc(cur ? cur.notes : '')}"></div>
+    <div id="mp-msg" hidden></div>
+    <button type="button" class="btn primary block" data-act="mp-save">${cur ? 'Save changes' : 'Add'}</button>
+    ${cur ? `${!cur.end ? '<button type="button" class="btn ghost block mt10" data-act="mp-stop">Stopped taking it</button>' : '<button type="button" class="btn ghost block mt10" data-act="mp-resume">Started again</button>'}<button type="button" class="btn danger block mt10" data-act="mp-del">Remove from the list</button>` : ''}`, {
+    onMount: (b) => {
+      b.onclick = async (ev) => {
+        const btn = ev.target.closest('button'); if (!btn) return;
+        if (btn.dataset.mday) { const d = +btn.dataset.mday; days = days.includes(d) ? days.filter((x) => x !== d) : [...days, d]; btn.setAttribute('aria-pressed', String(days.includes(d))); return; }
+        const all = medPlans(); const done = () => { closeSheet(); renderMedsCard(); renderOutlook(); openMedManage(); if (S.tab === 'insights') renderInsights(); };
+        if (btn.dataset.act === 'mp-stop' && id) { all[id] = { ...all[id], end: today(), updatedAt: Date.now() }; await savePlans(all); done(); return; }
+        if (btn.dataset.act === 'mp-resume' && id) { all[id] = { ...all[id], end: '', updatedAt: Date.now() }; await savePlans(all); done(); return; }
+        if (btn.dataset.act === 'mp-del' && id) { all[id] = { ...all[id], removed: true, updatedAt: Date.now() }; await savePlans(all); done(); toast('Removed'); return; }
+        if (btn.dataset.act !== 'mp-save') return;
+        const name = $('#mp-name', b).value.trim(); const dose = $('#mp-dose', b).value.trim();
+        if (!name) return showMsg($('#mp-msg', b), 'warn', 'Add the medicine name.');
+        const times = [0, 1, 2, 3].map((i) => $(`#mp-t${i}`, b).value).filter(Boolean);
+        const start = $('#mp-start', b).value || today();
+        const next = { ...(cur || {}), name, dose, times, days, notes: $('#mp-notes', b).value.trim(), start, end: cur ? cur.end : '', history: cur ? cur.history.slice() : [], removed: false, updatedAt: Date.now() };
+        if (cur && dose && dose !== cur.dose) { const cd = $('#mp-changed', b).value || today(); next.history.push({ date: cd > today() ? today() : cd, dose }); }
+        all[id || Sync.randomId(9)] = next; await savePlans(all); done(); toast(cur && dose !== cur.dose ? 'Saved. Dose change marked.' : 'Saved');
+      };
+    },
+  });
+}
+function openEffectSheet() {
+  const plans = Object.entries(medPlans()).filter(([, p]) => activeOn(p, today())); let pick = plans.length === 1 ? plans[0][0] : ''; let picked = [];
+  openSheet('Note an effect', `
+    <p class="hint intro">Anything you notice, so patterns can show up over time. It doesn't mean the medicine caused it.</p>
+    <div class="field"><span class="label">What did you notice?</span><div class="chips" data-ef>${EFFECTS.map(([k, l]) => `<button type="button" class="chip" data-ef="${k}" aria-pressed="false">${l}</button>`).join('')}</div></div>
+    ${plans.length > 1 ? `<div class="field"><span class="label">Which medicine, if you know</span><div class="chips">${plans.map(([id, p]) => `<button type="button" class="chip" data-ep="${esc(id)}" aria-pressed="false">${esc(p.name)}</button>`).join('')}</div></div>` : ''}
+    <div class="field"><label class="label" for="ef-note">Note (optional)</label><input class="input" id="ef-note" maxlength="200" autocomplete="off"></div>
+    <div id="ef-msg" hidden></div>
+    <button type="button" class="btn primary block" data-act="ef-save">Save</button>`, {
+    onMount: (b) => {
+      b.onclick = async (ev) => {
+        const btn = ev.target.closest('button'); if (!btn) return;
+        if (btn.dataset.ef) { picked = picked.includes(btn.dataset.ef) ? picked.filter((x) => x !== btn.dataset.ef) : [...picked, btn.dataset.ef]; btn.setAttribute('aria-pressed', String(picked.includes(btn.dataset.ef))); return; }
+        if (btn.dataset.ep) { pick = pick === btn.dataset.ep ? '' : btn.dataset.ep; $$('[data-ep]', b).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.ep === pick))); return; }
+        if (btn.dataset.act !== 'ef-save') return;
+        if (!picked.length) return showMsg($('#ef-msg', b), 'warn', 'Tap at least one.');
+        const now = Date.now(); const plan = pick ? medPlans()[pick] : null;
+        await saveActivity({ id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, cat: 'sidefx', date: today(), time: nowHHMM(), tod: currentTod(), effects: picked, planId: pick, planName: plan ? plan.name : '', title: '', notes: $('#ef-note', b).value.trim().slice(0, 200), sev: 0, src: 'parent', srcName: S.myName || 'Me' });
+        const m = plan ? listedFor(plan.name) : null; const hit = m ? picked.filter((k) => m.keys.includes(k)) : [];
+        closeSheet(); renderMedsCard(); if (S.tab === 'insights') renderInsights();
+        toast(hit.length ? `Saved. ${labelOfEffect(hit[0])} is listed as a possible effect of ${plan.name} in its consumer information. Worth mentioning to the prescriber.` : 'Saved');
+      };
+    },
+  });
+}
+const labelOfEffect = (k) => (EFFECTS.find((e) => e[0] === k) || [k, k])[1];
+function medsInsightHTML() {
+  if (isHelper()) return '';
+  const plans = medPlans(); const live = Object.fromEntries(Object.entries(plans).filter(([, p]) => !p.removed)); if (!Object.keys(live).length) return '';
+  const doses = medDoses(); const t = today(); const ratings = dayRatings(dayfeelEntries()); const f1 = (n) => (Math.round(n * 10) / 10).toFixed(1);
+  const ad = Object.values(adherence(live, doses, t, 14));
+  const adHTML = ad.length ? `<ul class="me-tips">${ad.map((a) => `<li>${esc(a.name)}: ${a.taken} of ${a.due} doses logged as taken over the last 14 days${a.late ? ` (${a.late} late)` : ''}${a.missed ? `, ${a.missed} missed` : ''}${a.unlogged ? `, ${a.unlogged} not logged` : ''}.</li>`).join('')}</ul>` : '';
+  const nights = sleepNights(live_all());
+  const ba = beforeAfter(changePoints(live), ratings, nights, t).slice(-3);
+  const baHTML = ba.map((r) => `<li>After you ${esc(r.label)} (${esc(fmtDayShort(r.date))}): their days were rated ${f1(r.afterRating)}, against ${f1(r.beforeRating)} in the weeks before (${r.afterN} and ${r.beforeN} rated days)${r.beforeSleep != null && Math.abs(r.afterSleep - r.beforeSleep) >= 30 ? `; sleep averaged ${fmtDur(Math.round(r.afterSleep))} compared with ${fmtDur(Math.round(r.beforeSleep))}` : ''}.</li>`).join('');
+  const ml = missedLink(live, doses, ratings, t);
+  const mlHTML = ml ? `<li>Days with every dose taken were rated ${f1(ml.allTaken)} on average, against ${f1(ml.offDays)} on days a dose was missed or late (${ml.allTakenN} and ${ml.offN} days).</li>` : '';
+  const ec = effectCounts(sidefxEntries(), t, 30).slice(0, 4);
+  const ecHTML = ec.length ? `<li>Noticed in the last 30 days: ${ec.map(([k, c]) => `${esc(labelOfEffect(k).toLowerCase())} (${c})`).join(', ')}.</li>` : '';
+  return `<div class="card"><h3 class="card-title">Medicines</h3>${adHTML}${baHTML || mlHTML || ecHTML ? `<ul class="me-tips">${baHTML}${mlHTML}${ecHTML}</ul>` : ''}
+    <p class="hint">These show what goes together, not what causes what. Many things change a child's days. If a pattern worries you, show it to the prescriber, and don't change a medicine on your own.</p></div>`;
+}
+const live_all = () => live();
 
 // ---------------------------------------------------------------- people
 function peopleSectionHTML() {

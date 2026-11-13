@@ -1,5 +1,5 @@
 {
-  "version": "1.20.0",
+  "version": "1.21.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -104,6 +104,10 @@
     {
       "date": "2026-11-14",
       "notes": "1.20.0 Me/Time tab: a private parent check-in (how's your cup today, tough moments with what happened, what was going on, repair and copying), tips straight after each moment, and patterns including how your child's days line up. Care time moved inside it. Feedback button on every screen: parents save it to the shared log, others share it as a message."
+    },
+    {
+      "date": "2026-11-14",
+      "notes": "1.21.0 Medicines: a shared daily plan (name, dose, times, days, or as needed) with one-tap Taken, Late and Missed on the Log tab, dose changes marked on charts, quick notes of effects you notice, and Insights patterns (doses taken, how days looked before and after a change, missed-dose days). Possible effects listed in official Australian consumer information are shown for common children's medicines, with sources. Records and shows patterns only; no advice."
     }
   ]
 }

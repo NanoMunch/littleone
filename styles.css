@@ -642,3 +642,9 @@ a.btn { text-decoration: none; }
 .fb-fab { display: none; position: fixed; right: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 86px); z-index: 30; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line, #e6d9c8); background: var(--card, #fffaf4); color: var(--ink, #3d2d22); font: inherit; font-size: .85rem; box-shadow: 0 2px 10px rgba(0,0,0,.12); cursor: pointer; }
 #app[data-screen="main"] .fb-fab { display: inline-flex; align-items: center; gap: 6px; }
 .fb-text { white-space: pre-wrap; display: block; margin-top: 4px; }
+.med-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--line, #eee3d3); }
+.med-row:first-of-type { border-top: 0; }
+.med-name small { display: block; color: var(--muted); font-size: .82rem; margin-top: 2px; }
+.med-listed { margin-top: 4px; font-size: .8rem; }
+.med-listed summary { cursor: pointer; color: var(--terracotta-ink); }
+.time-grid { grid-template-columns: 1fr 1fr; }

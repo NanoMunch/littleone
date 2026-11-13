@@ -1,5 +1,5 @@
 {
-  "version": "1.19.0",
+  "version": "1.20.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -100,6 +100,10 @@
     {
       "date": "2026-11-14",
       "notes": "1.19.0 Refresh button in the header, and pull down from the top to refresh: checks for a new version, syncs, and updates the time and cards. Saved entries now say what time and day they were saved for. The 'Log a night wake-up now' button now uses the date and time you set on the form instead of always using right now. The 'no food logged since' note no longer shows in the evening or after bedtime."
+    },
+    {
+      "date": "2026-11-14",
+      "notes": "1.20.0 Me/Time tab: a private parent check-in (how's your cup today, tough moments with what happened, what was going on, repair and copying), tips straight after each moment, and patterns including how your child's days line up. Care time moved inside it. Feedback button on every screen: parents save it to the shared log, others share it as a message."
     }
   ]
 }

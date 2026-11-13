@@ -2,10 +2,11 @@ import { getAllEntries, putEntries, kvGet, kvSet, kvDel } from './db.js';
 import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standardUnits } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
+import { WHAT, WHY, REPAIR, CUP, CUP_TAGS, SUPPORT, tipsFor, cupTips, momentSummary, childLink, cupLink } from './me.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.19.0';
+export const APP_VERSION = '1.20.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -273,9 +274,9 @@ const S = {
   // Family members ("helpers") use the app with their own code: S.role 'helper', S.fam their storage and key.
   role: 'parent', fam: null, famErr: null, famSeen: {},
   // Care time: a private record on this phone only. It is never added to the synced log or any sync file.
-  care: [], careRun: null, actRun: null, scrRun: null, timeRange: '7',
+  care: [], careRun: null, actRun: null, scrRun: null, me: [], meView: 'checkin', timeRange: '7',
 };
-const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'activity' && e.cat !== 'screen');
+const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'activity' && e.cat !== 'screen' && e.cat !== 'feedback');
 
 // ---------------------------------------------------------------- height and weight
 // Height in centimetres and weight in kilograms, as typed ("104.5", "104,5", "17.2 kg"). Returns NaN when
@@ -2784,6 +2785,7 @@ async function openSettings() {
       `}
     </div>
     ${peopleSectionHTML()}
+    <div class="set-section"><h3>Feedback</h3><p class="hint intro">Tell us what works and what doesn't. ${S.sync ? 'Feedback from your phones is kept together here.' : ''}</p><div class="btn-stack"><button type="button" class="btn dark" data-act="fb-open">Send feedback</button>${S.sync ? `<button type="button" class="btn ghost" data-act="fb-list">See feedback (${feedbackEntries().length})</button>` : ''}</div></div>
     ${S.sync ? familySectionHTML() : ''}
     <div class="set-section">
       <h3>Backup file</h3>
@@ -2833,6 +2835,8 @@ async function openSettings() {
         else if (a === 'st-join') openJoin(false);
         else if (a === 'st-backup') openBackup();
         else if (a === 'st-restore') openRestore();
+        else if (a === 'fb-open') openFeedback();
+        else if (a === 'fb-list') openFeedbackList();
         else if (a === 'ppl-add') openPersonSheet(null, btn.dataset.name || '');
         else if (btn.dataset.pplEdit) openPersonSheet(btn.dataset.pplEdit, '');
         else if (a === 'fam-setup') openFamilySetup(false);
@@ -2907,7 +2911,7 @@ function openBackup() {
           if (p1 !== p2) return showMsg(msg, 'warn', "The two passwords don't match.");
           setBusy(btn, true, 'Locking…');
           try {
-            const data = await Sync.makeBackup(p1, { app: 'littleone', v: 1, at: Date.now(), profile: S.profile, entries: Array.from(S.entries.values()), care: S.care });
+            const data = await Sync.makeBackup(p1, { app: 'littleone', v: 1, at: Date.now(), profile: S.profile, entries: Array.from(S.entries.values()), care: S.care, me: S.me });
             file = new Blob([JSON.stringify(data)], { type: 'application/json' });
             $('#bk-msg', b).hidden = true;
             $('#bk-ready', b).innerHTML = `<div class="notice ok mt14"><b>Backup ready</b> (${live().length} entries). Save it somewhere safe, such as Files on your phone.</div><button type="button" class="btn dark block" data-act="bk-share">Share or save backup</button>`;
@@ -2940,9 +2944,134 @@ function openRestore() {
           const data = await Sync.openBackup($('#rs-pass', b).value, json);
           let n = await mergeRemote([{ app: 'littleone', dev: '', entries: data.entries, profile: data.profile }]);
           n += await mergeCare(data.care);
+          n += await mergeMe(data.me);
           scheduleSync(); closeSheet(); renderDependent();
           toast(n ? `Restored ${n} change${n > 1 ? 's' : ''}` : 'Everything in the backup was already here');
         } catch (e) { showMsg(msg, 'err', esc(e.message || String(e))); } finally { setBusy(btn, false); }
+      };
+    },
+  });
+}
+
+// ---------------------------------------------------------------- Me/Time: parent check-in (private to this phone)
+// Tough moments and a daily "my cup" tap, with tips and patterns. Stored only on this phone, never synced, and included in backup files you make.
+function cleanMe(list) {
+  const out = []; const seen = new Set(); const KEYS = (arr) => new Set(arr.map((x) => x[0]));
+  const W = KEYS(WHAT); const Y = KEYS(WHY); const T = new Set(CUP_TAGS.map((x) => x[0]));
+  for (const r of Array.isArray(list) ? list : []) {
+    if (!r || typeof r.id !== 'string' || seen.has(r.id) || !/^\d{4}-\d{2}-\d{2}$/.test(r.date || '')) continue;
+    seen.add(r.id);
+    if (r.kind === 'cup') out.push({ id: r.id, kind: 'cup', date: r.date, level: [1, 2, 3].includes(+r.level) ? +r.level : 1, tags: (Array.isArray(r.tags) ? r.tags : []).filter((k) => T.has(k)), createdAt: +r.createdAt || 0, updatedAt: +r.updatedAt || 0 });
+    else if (r.kind === 'moment' && +r.at > 0) out.push({ id: r.id, kind: 'moment', date: r.date, at: +r.at, what: (Array.isArray(r.what) ? r.what : []).filter((k) => W.has(k)), why: (Array.isArray(r.why) ? r.why : []).filter((k) => Y.has(k)), repair: ['yes', 'soon', 'unsure'].includes(r.repair) ? r.repair : '', copied: r.copied === 'yes' ? 'yes' : '', note: String(r.note || '').slice(0, 300), createdAt: +r.createdAt || 0, updatedAt: +r.updatedAt || 0 });
+  }
+  return out;
+}
+const saveMe = () => kvSet('me', S.me);
+async function mergeMe(list) {
+  let n = 0;
+  for (const r of cleanMe(list)) {
+    const cur = S.me.find((x) => x.id === r.id);
+    if (!cur) { S.me.push(r); n++; } else if (r.updatedAt > cur.updatedAt) { Object.assign(cur, r); n++; }
+  }
+  if (n) await saveMe();
+  return n;
+}
+const myMoments = () => S.me.filter((r) => r.kind === 'moment');
+const myCups = () => S.me.filter((r) => r.kind === 'cup');
+const labelOf = (arr, k) => { const x = arr.find((y) => y[0] === k); return x ? x[1] : k; };
+
+function renderMeSwitch(box) {
+  box.innerHTML = [['checkin', 'Check-in'], ['care', 'Care time']].map(([k, l]) => `<button type="button" class="chip solid" data-meview="${k}" aria-pressed="${S.meView === k}">${l}</button>`).join('');
+  box.onclick = (ev) => { const b = ev.target.closest('[data-meview]'); if (b) { S.meView = b.dataset.meview; S.meChosen = true; renderTime(); } };
+}
+function tipsHTML(r) {
+  return `${r.support ? `<div class="notice err"><b>If you're worried you might hurt them,</b> please reach out now. ${SUPPORT.map(esc).join(' ')} If anyone is in immediate danger, call 000.</div>` : ''}
+    <ul class="me-tips">${r.tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>`;
+}
+function renderCheckin(box) {
+  const t = today(); const cup = myCups().find((c) => c.date === t);
+  const moments = myMoments().sort((a, b) => b.at - a.at); const recent = moments.filter((m) => m.date >= addDays(t, -13));
+  const sum = momentSummary(moments, t, 28); const ratings = dayRatings(dayfeelEntries());
+  const link = childLink(moments.filter((m) => m.date >= addDays(t, -60)), ratings, t); const cl = cupLink(moments, myCups());
+  const f1 = (n) => (Math.round(n * 10) / 10).toFixed(1);
+  const patterns = !sum ? '' : `<div class="card mt10"><h3 class="card-title">Patterns, last 4 weeks</h3><ul class="me-tips">
+      <li>${sum.n} tough moment${sum.n === 1 ? '' : 's'} on ${sum.days} day${sum.days === 1 ? '' : 's'}. ${sum.when.length ? `Most often in the ${esc(sum.when[0][0].toLowerCase())}.` : ''}</li>
+      ${sum.why.length ? `<li>Most common backdrop: ${sum.why.slice(0, 2).map(([k, c]) => `${esc(labelOf(WHY, k).toLowerCase())} (${c})`).join(', ')}.</li>` : ''}
+      <li>You repaired after ${sum.repaired} of ${sum.n}. ${sum.repaired < sum.n ? 'Repairing, even later in the day, is the part that matters most.' : 'That is the part that matters most.'}</li>
+      ${sum.copied ? `<li>You noticed them copying it ${sum.copied} time${sum.copied === 1 ? '' : 's'}.</li>` : ''}
+      ${cl ? `<li>On days your cup was stretched or empty, there were ${f1(cl.low)} tough moments a day, against ${f1(cl.ok)} on steady days.</li>` : ''}
+      ${link.map((x) => `<li>${x.kind === 'same' ? `Your child's day was rated ${f1(x.withAvg)} on days with a tough moment, against ${f1(x.withoutAvg)} on other days` : x.kind === 'next' ? `The day after a tough moment, their day was rated ${f1(x.withAvg)}, against ${f1(x.withoutAvg)} after other days` : `After a moment you repaired, the next day was rated ${f1(x.withAvg)}, against ${f1(x.withoutAvg)} when you hadn't repaired`} (1 is calm, 4 is hard).</li>`).join('')}
+    </ul><p class="hint">These show what goes together, not what causes what. A harder day for them often means a harder day for you too, so it can run both ways.</p></div>`;
+  box.innerHTML = `
+    <div class="time-private"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Only on this phone. Your partner and family can't see this, and it never syncs. It's included in backup files you make.</span></div>
+    <div class="card"><h3 class="card-title">How's your cup today?</h3>
+      <div class="chips" role="group" aria-label="How is your cup today">${CUP.map(([v, l, em]) => `<button type="button" class="chip" data-cup="${v}" aria-pressed="${!!cup && cup.level === v}"><span aria-hidden="true">${em}</span>${l}</button>`).join('')}</div>
+      ${cup && cup.level >= 2 ? `<div class="chips mt10" role="group" aria-label="What is making it harder">${CUP_TAGS.map(([k, l]) => `<button type="button" class="chip" data-cuptag="${k}" aria-pressed="${cup.tags.includes(k)}">${l}</button>`).join('')}</div>` : ''}
+      ${cup && cup.level >= 2 ? `<ul class="me-tips">${cupTips(cup.level, cup.tags).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '<p class="hint">A quick tap. Over time it shows how you being low and tough moments go together.</p>'}</div>
+    <div class="card mt10"><h3 class="card-title">A tough moment?</h3>
+      <p class="hint">Everyone has them. Noting one takes a few taps, and the repair is what counts.</p>
+      <button type="button" class="btn dark block" data-act="me-moment">Note a tough moment</button>
+      ${recent.length ? `<div class="act-list">${recent.slice(0, 8).map((m) => `<button type="button" class="time-row" data-memoment="${esc(m.id)}"><span><b>${esc(m.what.map((k) => labelOf(WHAT, k)).join(', ') || 'Tough moment')}</b><small>${esc(fmtDayShort(m.date))} · ${esc(fmtTime(msHHMM(m.at)))} · ${m.repair === 'yes' ? 'repaired' : m.repair === 'soon' ? 'repair planned' : 'not repaired yet'}</small></span><span class="dur">${m.copied === 'yes' ? 'copied' : ''}</span></button>`).join('')}</div>` : ''}</div>
+    ${patterns}
+    <details class="card mt10 me-more"><summary>Tips to come back to</summary>
+      <p class="hint">Repair: get down to their level, name what happened, say sorry, say it wasn't their fault, and offer a hug. Any time of day works.</p>
+      <p class="hint">Reset: feet on the floor, breathe out longer than in, step away for a minute if they're safe.</p>
+      <p class="hint">When they copy it: name it kindly, show the other way, and praise calm words.</p>
+      <p class="hint">For you: food, sleep, five minutes alone, a handover with your partner, a friend.</p></details>
+    <p class="hint mt14">If things feel like too much: ${SUPPORT.map(esc).join(' ')}</p>`;
+  box.onclick = async (ev) => {
+    const b = ev.target.closest('button'); if (!b) return;
+    if (b.dataset.cup) {
+      const lvl = +b.dataset.cup; const now = Date.now(); const cur = myCups().find((c) => c.date === t);
+      if (cur && cur.level === lvl) S.me = S.me.filter((x) => x.id !== cur.id);
+      else if (cur) Object.assign(cur, { level: lvl, tags: lvl >= 2 ? cur.tags : [], updatedAt: now });
+      else S.me.push({ id: Sync.randomId(9), kind: 'cup', date: t, level: lvl, tags: [], createdAt: now, updatedAt: now });
+      await saveMe(); renderTime();
+    } else if (b.dataset.cuptag) {
+      const cur = myCups().find((c) => c.date === t); if (!cur) return;
+      cur.tags = cur.tags.includes(b.dataset.cuptag) ? cur.tags.filter((k) => k !== b.dataset.cuptag) : [...cur.tags, b.dataset.cuptag]; cur.updatedAt = Date.now(); await saveMe(); renderTime();
+    } else if (b.dataset.act === 'me-moment') openMomentSheet(null);
+    else if (b.dataset.memoment) openMomentSheet(S.me.find((x) => x.id === b.dataset.memoment));
+  };
+}
+function openMomentSheet(item) {
+  let what = item ? item.what.slice() : []; let why = item ? item.why.slice() : []; let repair = item ? item.repair : ''; let copied = item ? item.copied : '';
+  const chips = (arr, sel, attr) => arr.map(([k, l, em]) => `<button type="button" class="chip" ${attr}="${k}" aria-pressed="${sel.includes(k)}"><span aria-hidden="true">${em || ''}</span>${esc(l)}</button>`).join('');
+  openSheet(item ? 'Edit tough moment' : 'A tough moment', `
+    <div class="field"><span class="label">What happened (tap any)</span><div class="chips" data-w>${chips(WHAT, what, 'data-mw')}</div></div>
+    <div class="field"><span class="label">What was going on</span><div class="chips" data-y>${chips(WHY, why, 'data-my')}</div></div>
+    <div class="field"><span class="label">Repair</span><div class="chips" data-r>${REPAIR.map(([k, l]) => `<button type="button" class="chip" data-mr="${k}" aria-pressed="${repair === k}">${l}</button>`).join('')}</div></div>
+    <div class="field"><button type="button" class="chip" data-mc="1" aria-pressed="${copied === 'yes'}">👀 I saw them copy it</button></div>
+    <div class="row2 field"><div><label class="label" for="mm-date">Date</label><input class="input" type="date" id="mm-date" max="${today()}" value="${esc(item ? item.date : today())}"></div>
+      <div><label class="label" for="mm-time">Time</label><input class="input" type="time" id="mm-time" value="${esc(item ? msHHMM(item.at) : nowHHMM())}"></div></div>
+    <div class="field"><label class="label" for="mm-note">Note (optional)</label><input class="input" id="mm-note" maxlength="300" autocomplete="off" value="${esc(item ? item.note : '')}"></div>
+    <div id="mm-msg" hidden></div>
+    <button type="button" class="btn primary block" data-act="mm-save">${item ? 'Save changes' : 'Save'}</button>
+    ${item ? '<button type="button" class="btn danger block mt10" data-act="mm-del">Delete</button>' : ''}`, {
+    onMount: (b) => {
+      const flip = (arr, k) => (arr.includes(k) ? arr.filter((x) => x !== k) : [...arr, k]);
+      b.onclick = async (ev) => {
+        const btn = ev.target.closest('button'); if (!btn) return;
+        const press = (attr, on) => btn.setAttribute('aria-pressed', String(on));
+        if (btn.dataset.mw) { what = flip(what, btn.dataset.mw); press('', what.includes(btn.dataset.mw)); return; }
+        if (btn.dataset.my) { why = flip(why, btn.dataset.my); press('', why.includes(btn.dataset.my)); return; }
+        if (btn.dataset.mr) { repair = repair === btn.dataset.mr ? '' : btn.dataset.mr; $$('[data-mr]', b).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.mr === repair))); return; }
+        if (btn.dataset.mc) { copied = copied === 'yes' ? '' : 'yes'; press('', copied === 'yes'); return; }
+        if (btn.dataset.act === 'mm-del' && item) { S.me = S.me.filter((x) => x.id !== item.id); await saveMe(); closeSheet(); renderTime(); toast('Deleted'); return; }
+        if (btn.dataset.act !== 'mm-save') return;
+        const msg = $('#mm-msg', b); const date = $('#mm-date', b).value; const at = toMs(date, $('#mm-time', b).value);
+        if (!date || !isFinite(at)) return showMsg(msg, 'warn', 'Add the date and time.');
+        if (at > Date.now() + 60000) return showMsg(msg, 'warn', "That's in the future.");
+        if (!what.length) return showMsg(msg, 'warn', 'Tap at least one thing that happened.');
+        const now = Date.now(); const note = $('#mm-note', b).value.trim().slice(0, 300);
+        const rec = item ? Object.assign(item, { date, at, what, why, repair, copied, note, updatedAt: now }) : { id: Sync.randomId(9), kind: 'moment', date, at, what, why, repair, copied, note, createdAt: now, updatedAt: now };
+        if (!item) S.me.push(rec);
+        await saveMe(); closeSheet(); renderTime();
+        openSheet('Thanks for noting it', `${tipsHTML(tipsFor(rec))}
+          ${rec.repair !== 'yes' ? '<button type="button" class="btn dark block mt10" data-act="mm-repaired">I\'ve repaired</button>' : ''}
+          <button type="button" class="btn ghost block mt10" data-act="close-sheet">Close</button>`, {
+          onMount: (c) => { c.onclick = async (e2) => { const x = e2.target.closest('button'); if (!x) return; if (x.dataset.act === 'mm-repaired') { rec.repair = 'yes'; rec.updatedAt = Date.now(); await saveMe(); closeSheet(); renderTime(); toast('Repair noted. Well done.'); } else if (x.dataset.act === 'close-sheet') closeSheet(); }; },
+        });
       };
     },
   });
@@ -3001,7 +3130,15 @@ function personStatsHTML(list) {
     <p class="hint person-kinds">${Math.round((x.total / all) * 100)}% of the time · ${x.n} session${x.n === 1 ? '' : 's'}${Object.entries(x.kinds).sort((a, b) => b[1] - a[1]).map(([k, mm]) => ` · ${short[k]} ${careDur(mm)}`).join('')}</p>`).join('')}</div>`;
 }
 function renderTime() {
-  const box = $('#time-body'); const run = S.careRun;
+  const root = $('#time-body'); if (!root) return;
+  if (!$('#me-switch', root)) root.innerHTML = '<div class="chips" id="me-switch"></div><div id="me-main" class="mt10"></div>';
+  if (!S.meChosen && S.careRun) S.meView = 'care';
+  renderMeSwitch($('#me-switch', root));
+  clearInterval(careTick);
+  if (S.meView === 'care') renderCareTime($('#me-main', root)); else renderCheckin($('#me-main', root));
+}
+function renderCareTime(box) {
+  const run = S.careRun;
   const n = +S.timeRange; const from = addDays(today(), -(n - 1));
   const list = S.care.filter((r) => msDate(r.start) >= from).sort((a, b) => b.start - a.start);
   const total = list.reduce((s, r) => s + careMins(r), 0);
@@ -3100,6 +3237,57 @@ function openCareSheet(item) {
           else S.care.push({ id: Sync.randomId(9), start: s, end: e, who, kind, note, createdAt: now, updatedAt: now });
           await saveCare(); closeSheet(); renderTime(); toast(item ? 'Saved' : `Added ${careDur((e - s) / 60000)}`);
         }
+      };
+    },
+  });
+}
+
+// ---------------------------------------------------------------- feedback
+// A button on every screen. Parents with sync on save feedback into the shared log, where every parent can read it (Settings, Feedback).
+// Family helpers, and phones without sync, share it as a message instead.
+const FB_KINDS = [['bug', '🐞', 'Something broke'], ['confusing', '❓', 'Confusing'], ['idea', '💡', 'Idea'], ['love', '💛', 'Love this']];
+const FB_FACES = [[1, '😞'], [2, '😐'], [3, '🙂']];
+const feedbackEntries = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.cat === 'feedback' && e.text).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+const SCREEN_NAME = { log: 'Log', history: 'History', insights: 'Insights', time: 'Me/Time', export: 'Export' };
+function feedbackText(e) { return `[${(FB_KINDS.find((k) => k[0] === e.fkind) || ['', '', 'Note'])[2]}${e.face ? ` · ${['', 'unhappy', 'okay', 'happy'][e.face]}` : ''}] ${e.text}\n(${e.screen || 'unknown screen'}, version ${e.version || '?'}${e.by ? `, from ${e.by}` : ''}, ${e.date || ''})`; }
+function openFeedback() {
+  let kind = 'idea'; let face = 0; const screen = SCREEN_NAME[S.tab] || 'Log'; const canSave = syncOn() && !isHelper();
+  openSheet('Feedback', `
+    <p class="hint intro">Anything is welcome: a bug, something confusing, an idea, or something you like.</p>
+    <div class="field"><div class="chips" data-fk>${FB_KINDS.map(([k, em, l]) => `<button type="button" class="chip" data-fkind="${k}" aria-pressed="${kind === k}"><span aria-hidden="true">${em}</span>${l}</button>`).join('')}</div></div>
+    <div class="field"><span class="label">How is it feeling?</span><div class="chips" data-ff>${FB_FACES.map(([v, em]) => `<button type="button" class="chip" data-fface="${v}" aria-pressed="false" aria-label="${['', 'Unhappy', 'Okay', 'Happy'][v]}"><span aria-hidden="true">${em}</span></button>`).join('')}</div></div>
+    <div class="field"><label class="label" for="fb-text">What would you like to say?</label><textarea class="textarea" id="fb-text" maxlength="1000" placeholder="Tell us what happened or what you'd change"></textarea></div>
+    <p class="hint">It includes the screen you were on (${esc(screen)}) and the app version. It never includes anything you've logged.${canSave ? ' It is saved in your shared log so your partner can read it too.' : ''}</p>
+    <div id="fb-msg" hidden></div>
+    <button type="button" class="btn primary block" data-act="fb-send">${canSave ? 'Save feedback' : 'Share feedback'}</button>
+    ${canSave ? '<button type="button" class="btn ghost block mt10" data-act="fb-share">Share it as a message instead</button>' : ''}`, {
+    onMount: (b) => {
+      b.onclick = async (ev) => {
+        const btn = ev.target.closest('button'); if (!btn) return;
+        if (btn.dataset.fkind) { kind = btn.dataset.fkind; $$('[data-fkind]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === btn))); return; }
+        if (btn.dataset.fface) { face = face === +btn.dataset.fface ? 0 : +btn.dataset.fface; $$('[data-fface]', b).forEach((x) => x.setAttribute('aria-pressed', String(+x.dataset.fface === face))); return; }
+        const act = btn.dataset.act; if (act !== 'fb-send' && act !== 'fb-share') return;
+        const text = $('#fb-text', b).value.trim().slice(0, 1000);
+        if (!text && !face) return showMsg($('#fb-msg', b), 'warn', 'Add a few words, or tap a face.');
+        const now = Date.now();
+        const e = { id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, cat: 'feedback', date: today(), tod: 'Midday', title: '', notes: '', sev: 0, src: 'parent', srcName: S.myName || '', fkind: kind, face, text: text || '(no message)', screen, version: APP_VERSION };
+        if (act === 'fb-send' && canSave) { S.entries.set(e.id, e); await putEntries([e]); scheduleSync(); closeSheet(); toast('Thank you. Saved in your shared log.'); return; }
+        const msg = feedbackText(e);
+        try { if (navigator.share) { await navigator.share({ text: `Little One feedback\n${msg}` }); closeSheet(); toast('Thank you'); return; } } catch (err) { if (err && err.name === 'AbortError') return; }
+        try { await navigator.clipboard.writeText(`Little One feedback\n${msg}`); closeSheet(); toast('Copied. Paste it into a message to send.'); } catch (err) { showMsg($('#fb-msg', b), 'warn', 'Couldn\'t share from here. Select and copy this: ' + esc(msg)); }
+      };
+    },
+  });
+}
+function openFeedbackList() {
+  const list = feedbackEntries();
+  openSheet('Feedback', list.length ? `<div class="card kv-card">${list.map((e) => `<div class="kv helper-row"><span><b>${esc((FB_KINDS.find((k) => k[0] === e.fkind) || ['', '', 'Note'])[2])}${e.face ? ` ${FB_FACES.find((f) => f[0] === e.face)[1]}` : ''}</b><small>${esc(e.by || 'Someone')} · ${esc(fmtDayShort(e.date))} · ${esc(e.screen || '')}</small><small class="fb-text">${esc(e.text)}</small></span><span class="mini-links"><button type="button" data-fbdel="${esc(e.id)}">Delete</button></span></div>`).join('')}</div>
+      <button type="button" class="btn dark block mt10" data-act="fb-copy">Copy all</button>` : '<p class="hint">No feedback yet.</p>', {
+    onMount: (b) => {
+      b.onclick = async (ev) => {
+        const btn = ev.target.closest('button'); if (!btn) return;
+        if (btn.dataset.fbdel) { await deleteActivity({ id: btn.dataset.fbdel }); openFeedbackList(); }
+        else if (btn.dataset.act === 'fb-copy') { try { await navigator.clipboard.writeText(`Little One feedback (${list.length})\n\n${list.map(feedbackText).join('\n\n')}`); toast('Copied'); } catch (e) { toast("Couldn't copy from here"); } }
       };
     },
   });
@@ -3430,6 +3618,7 @@ async function init() {
   S.fam = (await kvGet('fam')) || null;
   S.famSeen = (await kvGet('famSeen')) || {};
   S.care = cleanCare(await kvGet('care'));
+  S.me = cleanMe(await kvGet('me'));
   S.careRun = cleanRun(await kvGet('careRun'));
   S.actRun = cleanActRun(await kvGet('actRun'));
   S.scrRun = cleanScrRun(await kvGet('scrRun'));
@@ -3450,6 +3639,7 @@ async function init() {
   $$('.tabbar [data-tab]').forEach((b) => { b.onclick = () => switchTab(b.dataset.tab); });
   $('#open-settings').onclick = openSettings;
   $('#refresh-btn').onclick = refreshApp;
+  $('#fb-fab').onclick = openFeedback;
   setupPullToRefresh();
   $('#sync-pill').onclick = async () => {
     if (!syncOn()) { openSettings(); return; }

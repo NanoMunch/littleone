@@ -635,3 +635,10 @@ a.btn { text-decoration: none; }
 #refresh-btn.spin svg { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { #refresh-btn.spin svg { animation: none; } }
+.me-tips { margin: 8px 0 4px; padding-left: 18px; font-size: .9rem; }
+.me-tips li { margin: 6px 0; }
+.me-more summary { cursor: pointer; font-weight: 600; }
+#me-switch { margin-bottom: 2px; }
+.fb-fab { display: none; position: fixed; right: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 86px); z-index: 30; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line, #e6d9c8); background: var(--card, #fffaf4); color: var(--ink, #3d2d22); font: inherit; font-size: .85rem; box-shadow: 0 2px 10px rgba(0,0,0,.12); cursor: pointer; }
+#app[data-screen="main"] .fb-fab { display: inline-flex; align-items: center; gap: 6px; }
+.fb-text { white-space: pre-wrap; display: block; margin-top: 4px; }

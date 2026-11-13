@@ -2,9 +2,10 @@ import { getAllEntries, putEntries, kvGet, kvSet, kvDel } from './db.js';
 import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standardUnits } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
+import { moveTargets, moveTotals, moveNudge } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.16.0';
+export const APP_VERSION = '1.17.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -272,9 +273,9 @@ const S = {
   // Family members ("helpers") use the app with their own code: S.role 'helper', S.fam their storage and key.
   role: 'parent', fam: null, famErr: null, famSeen: {},
   // Care time: a private record on this phone only. It is never added to the synced log or any sync file.
-  care: [], careRun: null, timeRange: '7',
+  care: [], careRun: null, actRun: null, timeRange: '7',
 };
-const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel');
+const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'activity');
 
 // ---------------------------------------------------------------- height and weight
 // Height in centimetres and weight in kilograms, as typed ("104.5", "104,5", "17.2 kg"). Returns NaN when
@@ -326,10 +327,14 @@ export const DAYTAGS = [
   { k: 'busy', em: '👥', label: 'Busy or visitors' }, { k: 'bigday', em: '🎒', label: 'Big day out' },
 ];
 const TAG = Object.fromEntries(DAYTAGS.map((t) => [t.k, t]));
+const DAYTAGS_UI = DAYTAGS.filter((t) => t.k !== 'outdoors' && t.k !== 'play'); // those two come from the activity card
+const activityEntries = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.cat === 'activity' && e.date && (e.kind === 'outdoors' || e.kind === 'play'));
+const tagSource = () => dayEntries().concat(activityEntries());
 // date -> Set of tags from everyone's entries
 export function dayTagMap(list) {
   const m = new Map();
-  for (const e of list) { if (!Array.isArray(e.tags) || !e.tags.length) continue; const st = m.get(e.date) || new Set(); e.tags.forEach((t) => { if (TAG[t]) st.add(t); }); m.set(e.date, st); }
+  for (const e of list) {
+    if (e.cat === 'activity' && (e.kind === 'outdoors' || e.kind === 'play')) { const st = m.get(e.date) || new Set(); st.add(e.kind); m.set(e.date, st); continue; } if (!Array.isArray(e.tags) || !e.tags.length) continue; const st = m.get(e.date) || new Set(); e.tags.forEach((t) => { if (TAG[t]) st.add(t); }); m.set(e.date, st); }
   return m;
 }
 // date -> average of everyone's rating that day
@@ -372,7 +377,7 @@ function renderDayCard() {
     <p class="hint feel-hint">${alsoText ? `Also rated: ${alsoText}. ` : ''}Tap again to clear. <button type="button" class="link-btn" data-act="feel-catchup">Rate recent days</button></p>
     <details class="feel-more"${S.feelOpen ? ' open' : ''}><summary>What did today look like?${myTags.size ? ` <span class="n">${myTags.size} picked</span>` : ''}</summary>
       <p class="hint">Optional taps. Over time these show what goes with calmer days.</p>
-      <div class="chips" role="group" aria-label="What today looked like">${DAYTAGS.map((t) => `<button type="button" class="chip" data-daytag="${t.k}" aria-pressed="${myTags.has(t.k)}">${t.em} ${esc(t.label)}</button>`).join('')}</div>
+      <div class="chips" role="group" aria-label="What today looked like">${DAYTAGS_UI.map((t) => `<button type="button" class="chip" data-daytag="${t.k}" aria-pressed="${myTags.has(t.k)}">${t.em} ${esc(t.label)}</button>`).join('')}</div>
       ${otherTags.length ? `<p class="hint">Also added: ${otherTags.map((k) => esc(TAG[k].label)).join(', ')}.</p>` : ''}</details></div>`;
   box.onclick = async (ev) => {
     const b = ev.target.closest('[data-feel]');
@@ -397,6 +402,128 @@ function openFeelCatchup() {
       };
     },
   });
+}
+
+// ---------------------------------------------------------------- outdoors and active play (shared)
+// Minutes of outdoor time and active play, kept as small synced entries (cat 'activity') that stay out of History and the PDF.
+const ACT_KINDS = { outdoors: { em: '🌳', label: 'Outdoors' }, play: { em: '🏃', label: 'Active play' } };
+const todOf = (hhmm) => (hhmm ? todForTime(hhmm) : '') || 'Midday';
+function whoChoices() {
+  const me = { src: 'parent', name: S.myName || 'Me' };
+  const out = [me];
+  const add = (src, name) => { name = String(name || '').trim(); if (name && !out.some((x) => x.name === name)) out.push({ src, name }); };
+  parentNames('').forEach((n) => add('parent', n));
+  peopleList(false).forEach(([, x]) => add(x.role, x.name));
+  return out;
+}
+async function saveActivity(e) { S.entries.set(e.id, e); await putEntries([e]); scheduleSync(); }
+function newActivity(f) {
+  const now = Date.now();
+  return { id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, cat: 'activity', title: '', notes: '', sev: 0, src: f.src || 'parent', srcName: f.srcName || S.myName || 'Me', kind: f.kind, mins: f.mins, date: f.date, time: f.time || '', end: f.end || '', tod: todOf(f.time) };
+}
+async function deleteActivity(e) { await saveActivity({ id: e.id, deleted: true, updatedAt: Date.now(), by: S.myName || '' }); }
+function actTargets() { return moveTargets(ageMonths(S.profile.childBirth, today())); }
+const cleanActRun = (r) => (r && ACT_KINDS[r.kind] && +r.start > 0 && +r.start <= Date.now() + 60000 ? { kind: r.kind, start: +r.start } : null);
+export function renderActivityCard() {
+  const box = $('#activity-card'); if (!box) return;
+  if (isHelper()) { box.innerHTML = ''; return; }
+  const t = today(); const all = activityEntries(); const tot = moveTotals(all, t); const tg = actTargets();
+  const todays = all.filter((e) => e.date === t).sort((a, b) => (b.time || '').localeCompare(a.time || '') || b.createdAt - a.createdAt);
+  const min = (m) => (m >= 60 ? fmtDur(m) : `${Math.round(m)} min`);
+  const bar = (label, got, goal, note) => `<div class="act-prog"><div class="act-head"><span>${label}</span><span class="act-num">${min(got)} of ${min(goal)}</span></div><div class="bar"><div class="track"><div class="fill" data-w="${Math.max(got ? 3 : 0, Math.min(100, Math.round((got / Math.max(1, goal)) * 100)))}"></div></div></div>${note ? `<p class="hint person-kinds">${note}</p>` : ''}</div>`;
+  let targets = '';
+  if (tg) {
+    targets = (tg.band === 'school'
+      ? bar('Active', tot.moving, tg.moving, 'Moderate to vigorous activity: outdoors and active play together.')
+      : bar('Moving about', tot.moving, tg.moving, 'Outdoors and active play together, spread through the day.')
+        + (tg.band === 'toddler' ? '' : bar('Energetic play', tot.play, tg.energetic, 'Running, jumping, climbing: puffing a bit.')))
+      + bar('Outdoors', tot.outdoors, tg.outdoors, 'A suggestion, not an official guideline.');
+  } else if (!S.profile.childBirth) targets = '<p class="hint">Set your child\'s birth month in Settings to see daily targets.</p>';
+  const nudge = tg ? moveNudge(tg, tot, new Date().getHours()) : '';
+  const run = S.actRun;
+  const quick = (k) => `<div class="act-row"><span class="act-name"><span aria-hidden="true">${ACT_KINDS[k].em}</span> ${ACT_KINDS[k].label}${tot[k] ? ` <small>${min(tot[k])} today</small>` : ''}</span>
+    <span class="act-btns">${[10, 30, 60].map((m) => `<button type="button" class="chip" data-actq="${k}:${m}">+${m}</button>`).join('')}<button type="button" class="chip" data-actother="${k}">Other</button></span></div>`;
+  const timer = run
+    ? `<div class="act-timer"><b>${ACT_KINDS[run.kind].em} ${ACT_KINDS[run.kind].label}</b> timing <span data-act-elapsed>${clock(Date.now() - run.start)}</span>
+        <span class="act-btns"><button type="button" class="chip" data-act="act-discard">Discard</button><button type="button" class="chip" aria-pressed="true" data-act="act-stop">Stop and save</button></span></div>`
+    : `<div class="act-timer"><span>Or time it:</span><span class="act-btns"><button type="button" class="chip" data-acttimer="outdoors">▶ Outdoors</button><button type="button" class="chip" data-acttimer="play">▶ Active play</button></span></div>`;
+  const rows = todays.map((e) => `<button type="button" class="time-row" data-actedit="${esc(e.id)}"><span><b>${ACT_KINDS[e.kind].em} ${ACT_KINDS[e.kind].label}</b><small>${esc(srcLabel(e))}${e.time ? ` · ${esc(fmtTime(e.time))}${e.end ? ` to ${esc(fmtTime(e.end))}` : ''}` : ''}</small></span><span class="dur">${e.mins ? min(e.mins) : 'some'}</span></button>`).join('');
+  box.innerHTML = `<div class="card act-card"><h3 class="card-title">Outdoors and active play</h3>${targets}
+    ${nudge ? `<p class="outlook-tip"><b>Might help:</b> ${esc(nudge)}</p>` : ''}
+    ${quick('outdoors')}${quick('play')}${timer}${rows ? `<div class="act-list">${rows}</div>` : ''}
+    <p class="hint">${tg ? `Based on the Australian 24-hour movement guidelines for ${esc(tg.label)}. ` : ''}Shared with everyone using this log. <button type="button" class="link-btn" data-actother="outdoors" data-actday="1">Add for another day</button></p></div>`;
+  applySizes(box);
+  clearInterval(actTick); if (run) actTick = setInterval(() => { const el = $('[data-act-elapsed]'); if (el && S.actRun) el.textContent = clock(Date.now() - S.actRun.start); }, 1000);
+  box.onclick = async (ev) => {
+    const b = ev.target.closest('button'); if (!b) return;
+    const refresh = () => { renderActivityCard(); renderOutlook(); if (S.tab === 'insights') renderInsights(); };
+    if (b.dataset.actq) { const [k, m] = b.dataset.actq.split(':'); await saveActivity(newActivity({ kind: k, mins: +m, date: today(), time: '' })); refresh(); toast(`Added ${m} min`, { label: 'Undo', fn: async () => { const last = activityEntries().filter((e) => e.byDev === S.deviceId && e.kind === k && e.mins === +m).sort((a, c) => c.createdAt - a.createdAt)[0]; if (last) { await deleteActivity(last); refresh(); } } }); }
+    else if (b.dataset.actother) openActivitySheet(null, b.dataset.actother, !!b.dataset.actday);
+    else if (b.dataset.actedit) { const e = S.entries.get(b.dataset.actedit); if (e) openActivitySheet(e, e.kind, false); }
+    else if (b.dataset.acttimer) { S.actRun = { kind: b.dataset.acttimer, start: Date.now() }; await kvSet('actRun', S.actRun); renderActivityCard(); }
+    else if (b.dataset.act === 'act-discard') { S.actRun = null; await kvDel('actRun'); renderActivityCard(); toast('Discarded'); }
+    else if (b.dataset.act === 'act-stop') {
+      const r = S.actRun; if (!r) return; const end = Date.now(); const mins = Math.max(1, Math.round((end - r.start) / 60000));
+      const sd = ymd(new Date(r.start)); const hm = (ms) => `${pad(new Date(ms).getHours())}:${pad(new Date(ms).getMinutes())}`;
+      await saveActivity(newActivity({ kind: r.kind, mins, date: sd, time: hm(r.start), end: hm(end) }));
+      S.actRun = null; await kvDel('actRun'); refresh(); toast(`Saved ${mins} min`);
+    }
+  };
+}
+let actTick = null;
+function openActivitySheet(item, kind0, pickDay) {
+  let kind = item ? item.kind : kind0 || 'outdoors'; const who = whoChoices();
+  let wi = Math.max(0, item ? who.findIndex((x) => x.name === item.srcName) : 0);
+  openSheet(item ? 'Edit activity' : 'Add activity', `
+    <div class="field"><span class="label">What</span><div class="chips" data-akinds>${Object.entries(ACT_KINDS).map(([k, v]) => `<button type="button" class="chip" data-ak="${k}" aria-pressed="${kind === k}"><span aria-hidden="true">${v.em}</span>${v.label}</button>`).join('')}</div></div>
+    <div class="row2 field"><div><label class="label" for="ac-date">Date</label><input class="input" type="date" id="ac-date" max="${today()}" value="${esc(item ? item.date : today())}"></div>
+      <div><label class="label" for="ac-mins">Minutes</label><input class="input" type="number" inputmode="numeric" min="1" max="720" id="ac-mins" value="${item && item.mins ? item.mins : ''}" placeholder="e.g. 45"></div></div>
+    <p class="hint">Or enter a start and end time, and the minutes are worked out.</p>
+    <div class="row2 field"><div><label class="label" for="ac-start">From</label><input class="input" type="time" id="ac-start" value="${esc(item ? item.time || '' : '')}"></div>
+      <div><label class="label" for="ac-end">To</label><input class="input" type="time" id="ac-end" value="${esc(item ? item.end || '' : '')}"></div></div>
+    ${who.length > 1 ? `<div class="field"><span class="label">Who</span><div class="chips" data-awho>${who.map((x, i) => `<button type="button" class="chip" data-aw="${i}" aria-pressed="${wi === i}">${esc(x.name)}</button>`).join('')}</div></div>` : ''}
+    <div id="ac-msg" hidden></div>
+    <button type="button" class="btn primary block" data-act="ac-save">${item ? 'Save changes' : 'Add'}</button>
+    ${item ? '<button type="button" class="btn danger block mt10" data-act="ac-del">Delete</button>' : ''}`, {
+    onMount: (b) => {
+      b.onclick = async (ev) => {
+        const btn = ev.target.closest('button'); if (!btn) return;
+        if (btn.dataset.ak) { kind = btn.dataset.ak; $$('[data-ak]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === btn))); return; }
+        if (btn.dataset.aw !== undefined) { wi = +btn.dataset.aw; $$('[data-aw]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === btn))); return; }
+        const done = () => { closeSheet(); renderActivityCard(); renderOutlook(); if (S.tab === 'insights') renderInsights(); };
+        if (btn.dataset.act === 'ac-del' && item) { await deleteActivity(item); done(); toast('Deleted'); return; }
+        if (btn.dataset.act !== 'ac-save') return;
+        const msg = $('#ac-msg', b); const date = $('#ac-date', b).value; const from = $('#ac-start', b).value; const to = $('#ac-end', b).value;
+        let mins = Math.round(+$('#ac-mins', b).value);
+        if (!date) return showMsg(msg, 'warn', 'Choose a date.');
+        if (date > today()) return showMsg(msg, 'warn', "The date can't be in the future.");
+        if (from && to) { const a = toMs(date, from); let z = toMs(date, to); if (z <= a) z += 86400000; mins = Math.round((z - a) / 60000); }
+        if (!(mins >= 1 && mins <= 720)) return showMsg(msg, 'warn', 'Add the minutes, or a start and end time.');
+        const w = who[wi] || who[0];
+        if (item) await saveActivity({ ...item, kind, mins, date, time: from, end: from && to ? to : '', tod: todOf(from), src: w.src, srcName: w.name, updatedAt: Date.now() });
+        else await saveActivity(newActivity({ kind, mins, date, time: from, end: from && to ? to : '', src: w.src, srcName: w.name }));
+        done(); toast(item ? 'Saved' : `Added ${mins} min`);
+      };
+    },
+  });
+}
+// Insights: minutes by day, and who did them.
+function activityInsightHTML() {
+  if (isHelper()) return '';
+  const list = activityEntries(); if (!list.length) return '';
+  const days = []; for (let i = 13; i >= 0; i--) days.push(addDays(today(), -i));
+  const totals = days.map((d) => ({ d, ...moveTotals(list, d) }));
+  const max = Math.max(60, ...totals.map((x) => x.moving));
+  const min = (m) => (m >= 60 ? fmtDur(m) : `${Math.round(m)} min`);
+  const rows = totals.slice().reverse().map((x) => `<div class="bar"><span>${esc(x.d === today() ? 'Today' : fmtDayShort ? fmtDayShort(x.d) : x.d)}</span><div class="track"><div class="fill" data-w="${x.moving ? Math.max(3, Math.round((x.moving / max) * 100)) : 0}"></div></div><span class="n time-n">${x.moving ? min(x.moving) : '–'}</span></div>`).join('');
+  const recent = list.filter((e) => e.date >= days[0]); const by = new Map();
+  recent.forEach((e) => { const k = srcLabel(e); by.set(k, (by.get(k) || 0) + (+e.mins || 0)); });
+  const who = Array.from(by.entries()).filter(([, m]) => m > 0).sort((a, b) => b[1] - a[1]);
+  const avg = totals.reduce((t, x) => t + x.moving, 0) / 14;
+  return `<div class="card"><h3 class="card-title">Outdoors and active play</h3>
+    <p class="hint">Last 14 days: an average of ${min(avg)} a day (outdoors and active play together).</p>
+    <div class="bars time-bars">${rows}</div>
+    ${who.length > 1 ? `<h4 class="feel-sub">Who spent that time</h4><p class="hint">${who.map(([n, m]) => `${esc(n)} ${esc(min(m))}`).join(' · ')}</p>` : ''}</div>`;
 }
 
 // Pure: for each tag, how the days with it were rated compared with the days without it (rated days only).
@@ -459,7 +586,7 @@ function renderOutlook() {
   const off = !!(S.outlook && S.outlook.off) || (S.outlook && S.outlook.hideDay === today());
   if (isHelper() || off) { box.innerHTML = ''; return; }
   const all = live();
-  const o = outlook(all, sleepNights(all), dayRatings(dayfeelEntries()), today(), new Date().getHours(), dayTagMap(dayEntries()));
+  const o = outlook(all, sleepNights(all), dayRatings(dayfeelEntries()), today(), new Date().getHours(), dayTagMap(tagSource()));
   if (!o) { box.innerHTML = ''; return; }
   box.innerHTML = `<div class="card outlook ${o.level}" role="region" aria-label="Today's outlook">
     <h3 class="card-title">${o.level === 'harder' ? 'Today may be a bit harder' : 'Worth knowing today'}</h3>
@@ -554,6 +681,7 @@ function showMain(opts = {}) {
   $('#app').dataset.role = isHelper() ? 'helper' : 'parent';
   renderHeader();
   renderDayCard();
+  renderActivityCard();
   renderOutlook();
   mountLogForm();
   switchTab(S.tab);
@@ -583,7 +711,7 @@ function renderTab() {
   else if (S.tab === 'export') renderExport();
   else if (S.tab === 'time') renderTime();
 }
-function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderOutlook(); }
+function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderActivityCard(); renderOutlook(); }
 
 // ---------------------------------------------------------------- entry form
 // ---- people (shared): partner, carers, family. Stored in the shared profile so every phone sees the same list.
@@ -1760,7 +1888,7 @@ function dayFeelChartSVG(ratings, nights) {
   return svg + '</svg>';
 }
 function tagSectionHTML(ratings) {
-  const tm = dayTagMap(dayEntries()); const stats = tagStats(ratings, tm);
+  const tm = dayTagMap(tagSource()); const stats = tagStats(ratings, tm);
   const tagged = Array.from(tm.keys()).length;
   if (!stats.length) return tagged ? '<p class="hint">Once a few more days are tagged and rated, this will show which of the things you tap seem to go with calmer or rougher days.</p>' : '';
   const f = (n) => (Math.round(n * 10) / 10).toFixed(1);
@@ -1909,7 +2037,7 @@ function renderInsights() {
   const all = live();
   const list = S.insightRange === 'all' ? all : rangeFilter(all, addDays(today(), -(+S.insightRange - 1)), today());
   const box = $('#insights');
-  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + dayFeelCardHTML(all) + growthCardHTML(all) + labCardHTML(all);
+  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + activityInsightHTML() + dayFeelCardHTML(all) + growthCardHTML(all) + labCardHTML(all);
   box.onclick = (ev) => {
     const cd = ev.target.closest('[data-check-day]'); if (cd) { openDayCheck(cd.dataset.checkDay); return; }
     const sh = ev.target.closest('[data-night]');
@@ -3150,6 +3278,7 @@ async function init() {
   S.famSeen = (await kvGet('famSeen')) || {};
   S.care = cleanCare(await kvGet('care'));
   S.careRun = cleanRun(await kvGet('careRun'));
+  S.actRun = cleanActRun(await kvGet('actRun'));
   const ss = await kvGet('syncState'); S.lastSyncAt = (ss && ss.lastSyncAt) || 0;
   (await getAllEntries()).forEach((e) => S.entries.set(e.id, e));
 

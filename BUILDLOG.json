@@ -1,5 +1,5 @@
 {
-  "version": "1.16.0",
+  "version": "1.17.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -88,6 +88,10 @@
     {
       "date": "2026-11-13",
       "notes": "1.16.0 People who help: add your partner, carers and family in Settings (shared with everyone). Pick them as 'who' when logging. In the private Time tab, choose who did the care (timer, add time, edit); Time shows who looked after your child, with share of time and kinds of care, and the CSV has a Who column. Time stays only on this phone."
+    },
+    {
+      "date": "2026-11-13",
+      "notes": "1.17.0 Outdoors and active play: quick minutes (+10, +30, +60, Other), a timer, or a start and end time, with who did it. Shared with everyone and editable later. Daily targets for your child's age from the Australian 24-hour movement guidelines, a gentle afternoon nudge, and a 14-day chart in Insights. Outdoors and play now count in the calm-days comparison."
     }
   ]
 }

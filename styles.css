@@ -617,3 +617,13 @@ a.btn { text-decoration: none; }
 .feel-tags { margin: 0 0 6px; padding-left: 18px; font-size: .88rem; }
 .feel-tags li { margin: 4px 0; }
 .person-kinds { margin: 2px 0 10px; }
+.act-card .bar { margin-top: 6px; }
+.act-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.act-name small { color: var(--muted, inherit); font-size: .8rem; margin-left: 4px; }
+.act-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.act-timer { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 12px; font-size: .9rem; }
+.act-list { margin-top: 10px; }
+.act-prog { margin-top: 10px; }
+.act-head { display: flex; justify-content: space-between; gap: 8px; font-size: .9rem; margin-bottom: 4px; }
+.act-num { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.act-prog .bar { display: block; }

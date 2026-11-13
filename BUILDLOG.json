@@ -1,5 +1,5 @@
 {
-  "version": "1.14.0",
+  "version": "1.16.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -19,7 +19,7 @@
     },
     {
       "date": "2026-10-17",
-      "notes": "1.2.1 One-tap \"Log a night wake-up now\" under Sleep (3–5 min, current time, undo). Night wake-ups are a sleep type with minutes awake, taken off the night total."
+      "notes": "1.2.1 One-tap \"Log a night wake-up now\" under Sleep (3\u20135 min, current time, undo). Night wake-ups are a sleep type with minutes awake, taken off the night total."
     },
     {
       "date": "2026-10-17",
@@ -51,7 +51,7 @@
     },
     {
       "date": "2026-10-21",
-      "notes": "1.8.1 Nature's Way Kids Smart Vita Gummies Multi-Vitamin for Fussy Eaters added as a ready-made supplement: ingredients per gummy from the label, counted in gummies, defaulting to the label dose for the age group (1 for ages 1–3, 2 otherwise), and included in the supplement check. Ready-made chips stay visible in the product form so you can switch between products. Amounts under 1 show three decimals."
+      "notes": "1.8.1 Nature's Way Kids Smart Vita Gummies Multi-Vitamin for Fussy Eaters added as a ready-made supplement: ingredients per gummy from the label, counted in gummies, defaulting to the label dose for the age group (1 for ages 1\u20133, 2 otherwise), and included in the supplement check. Ready-made chips stay visible in the product form so you can switch between products. Amounts under 1 show three decimals."
     },
     {
       "date": "2026-11-02",
@@ -80,6 +80,14 @@
     {
       "date": "2026-11-13",
       "notes": "1.14.0 Growth percentiles: add your child's sex and birth month and year in Settings to see where height, weight and BMI sit for their age (WHO standards to 2 years, CDC charts from 2 years), with a 3rd to 97th percentile band on the charts and a gentle note when a measurement has moved a lot. Worked out on the phone."
+    },
+    {
+      "date": "2026-11-13",
+      "notes": "1.15.0 'What did today look like?' taps on the daily card (outdoors, active play, one-on-one time, calm morning, bedtime routine, low screen, unwell, routine changed, busy, big day). Insights shows which taps go with calmer days; the today banner notes unwell and routine-change days, and a missing one-on-one time reminder in the evening."
+    },
+    {
+      "date": "2026-11-13",
+      "notes": "1.16.0 People who help: add your partner, carers and family in Settings (shared with everyone). Pick them as 'who' when logging. In the private Time tab, choose who did the care (timer, add time, edit); Time shows who looked after your child, with share of time and kinds of care, and the CSV has a Who column. Time stays only on this phone."
     }
   ]
 }

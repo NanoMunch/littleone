@@ -609,3 +609,11 @@ a.btn { text-decoration: none; }
 .outlook-foot { margin: 0; }
 
 .ref-median { fill: none; stroke: var(--sage); stroke-width: 1.3; stroke-dasharray: 4 3; }
+
+.feel-more { margin-top: 10px; }
+.feel-more summary { cursor: pointer; font-size: .9rem; font-weight: 600; color: var(--terracotta-ink); padding: 4px 0; }
+.feel-more .chips { margin-top: 6px; }
+.feel-sub { font-family: var(--serif); font-weight: 400; font-size: .98rem; margin: 14px 0 6px; }
+.feel-tags { margin: 0 0 6px; padding-left: 18px; font-size: .88rem; }
+.feel-tags li { margin: 4px 0; }
+.person-kinds { margin: 2px 0 10px; }

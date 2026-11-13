@@ -4,7 +4,7 @@ import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standard
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.14.0';
+export const APP_VERSION = '1.16.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -232,7 +232,7 @@ export function srcLabel(e) {
   const k = srcKey(e);
   if (k === 'parent') return e.srcName || e.by || 'Parent';
   if (k === 'family') return e.srcName || 'Family';
-  return SRC[k].label;
+  return e.srcName || SRC[k].label;
 }
 // What to show as an entry's heading. The description is optional when something else describes
 // the entry (a medicine or supplement, a temperature, or notes).
@@ -315,17 +315,42 @@ export function growthChange(s) {
 // One tap a day. Ratings are stored as small synced entries (cat 'dayfeel') that stay out of History, counts,
 // the PDF and the CSV, and feed the sleep comparison in Insights.
 export const DAYFEEL = [[1, '😌', 'Calm and easy'], [2, '🙂', 'Mostly fine'], [3, '😣', 'Bumpy'], [4, '😖', 'Hard']];
-const dayfeelEntries = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.cat === 'dayfeel' && e.date && e.rating >= 1 && e.rating <= 4);
+const dayEntries = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.cat === 'dayfeel' && e.date);
+const dayfeelEntries = () => dayEntries().filter((e) => e.rating >= 1 && e.rating <= 4);
+// What the day looked like: a few optional taps. Stored on the same small daily entry as the rating.
+export const DAYTAGS = [
+  { k: 'outdoors', em: '🌳', label: 'Time outdoors', good: true }, { k: 'play', em: '🏃', label: 'Active play', good: true },
+  { k: 'connect', em: '💞', label: 'One-on-one time', good: true }, { k: 'calmam', em: '🌅', label: 'Calm morning', good: true },
+  { k: 'bedroutine', em: '🛁', label: 'Bedtime routine', good: true }, { k: 'lowscreen', em: '📵', label: 'Low screen time', good: true },
+  { k: 'unwell', em: '🤒', label: 'Unwell' }, { k: 'changed', em: '🔀', label: 'Routine changed' },
+  { k: 'busy', em: '👥', label: 'Busy or visitors' }, { k: 'bigday', em: '🎒', label: 'Big day out' },
+];
+const TAG = Object.fromEntries(DAYTAGS.map((t) => [t.k, t]));
+// date -> Set of tags from everyone's entries
+export function dayTagMap(list) {
+  const m = new Map();
+  for (const e of list) { if (!Array.isArray(e.tags) || !e.tags.length) continue; const st = m.get(e.date) || new Set(); e.tags.forEach((t) => { if (TAG[t]) st.add(t); }); m.set(e.date, st); }
+  return m;
+}
 // date -> average of everyone's rating that day
 export function dayRatings(list) {
   const m = new Map();
   for (const e of list) { const r = m.get(e.date) || { sum: 0, n: 0 }; r.sum += e.rating; r.n++; m.set(e.date, r); }
   return new Map(Array.from(m, ([d, r]) => [d, r.sum / r.n]));
 }
-const myDayfeel = (date) => dayfeelEntries().find((e) => e.date === date && e.byDev === S.deviceId);
+const myDayfeel = (date) => dayEntries().find((e) => e.date === date && e.byDev === S.deviceId);
+async function setDayTag(date, key) {
+  const mine = myDayfeel(date); const now = Date.now(); let e;
+  const had = mine && Array.isArray(mine.tags) ? mine.tags : [];
+  const tags = had.includes(key) ? had.filter((t) => t !== key) : [...had, key];
+  if (mine) e = tags.length || mine.rating ? { ...mine, tags, updatedAt: now } : { id: mine.id, deleted: true, updatedAt: now, by: S.myName || '' };
+  else e = { id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, date, tod: 'Evening', cat: 'dayfeel', tags, src: 'parent', srcName: S.myName || 'Me', title: '', notes: '', sev: 0 };
+  if (!tags.length) delete e.tags;
+  S.entries.set(e.id, e); await putEntries([e]); scheduleSync();
+}
 async function setDayFeel(date, rating) {
   const mine = myDayfeel(date); const now = Date.now(); let e;
-  if (mine && mine.rating === rating) e = { id: mine.id, deleted: true, updatedAt: now, by: S.myName || '' };
+  if (mine && mine.rating === rating) e = (mine.tags && mine.tags.length) ? (() => { const x = { ...mine, updatedAt: now }; delete x.rating; return x; })() : { id: mine.id, deleted: true, updatedAt: now, by: S.myName || '' };
   else if (mine) e = { ...mine, rating, updatedAt: now };
   else e = { id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, date, tod: 'Evening', cat: 'dayfeel', rating, src: 'parent', srcName: S.myName || 'Me', title: '', notes: '', sev: 0 };
   S.entries.set(e.id, e); await putEntries([e]); scheduleSync();
@@ -339,13 +364,22 @@ function renderDayCard() {
   if (isHelper()) { box.innerHTML = ''; return; }
   const t = today();
   const others = dayfeelEntries().filter((e) => e.date === t && e.byDev !== S.deviceId);
+  const mineToday = myDayfeel(t); const myTags = new Set(mineToday && Array.isArray(mineToday.tags) ? mineToday.tags : []);
+  const otherTags = Array.from(new Set(dayEntries().filter((e) => e.date === t && e.byDev !== S.deviceId).flatMap((e) => (Array.isArray(e.tags) ? e.tags : [])))).filter((k) => TAG[k] && !myTags.has(k));
   const alsoText = others.length ? `${others.map((e) => `${esc(e.srcName || e.by || 'Partner')}: ${esc(DAYFEEL[e.rating - 1][2].toLowerCase())}`).join(', ')}` : '';
   box.innerHTML = `<div class="card feel-card"><h3 class="card-title">How did today feel?</h3>
     <div class="feel-row" role="group" aria-label="How did today feel?">${dayFeelButtons(t)}</div>
-    <p class="hint feel-hint">${alsoText ? `Also rated: ${alsoText}. ` : ''}Tap again to clear. <button type="button" class="link-btn" data-act="feel-catchup">Rate recent days</button></p></div>`;
+    <p class="hint feel-hint">${alsoText ? `Also rated: ${alsoText}. ` : ''}Tap again to clear. <button type="button" class="link-btn" data-act="feel-catchup">Rate recent days</button></p>
+    <details class="feel-more"${S.feelOpen ? ' open' : ''}><summary>What did today look like?${myTags.size ? ` <span class="n">${myTags.size} picked</span>` : ''}</summary>
+      <p class="hint">Optional taps. Over time these show what goes with calmer days.</p>
+      <div class="chips" role="group" aria-label="What today looked like">${DAYTAGS.map((t) => `<button type="button" class="chip" data-daytag="${t.k}" aria-pressed="${myTags.has(t.k)}">${t.em} ${esc(t.label)}</button>`).join('')}</div>
+      ${otherTags.length ? `<p class="hint">Also added: ${otherTags.map((k) => esc(TAG[k].label)).join(', ')}.</p>` : ''}</details></div>`;
   box.onclick = async (ev) => {
     const b = ev.target.closest('[data-feel]');
-    if (b) { await setDayFeel(b.dataset.date, +b.dataset.feel); renderDayCard(); if (S.tab === 'insights') renderInsights(); return; }
+    if (b) { await setDayFeel(b.dataset.date, +b.dataset.feel); renderDayCard(); renderOutlook(); if (S.tab === 'insights') renderInsights(); return; }
+    const sm = ev.target.closest('summary'); if (sm) { S.feelOpen = !sm.parentElement.open; return; }
+    const tg = ev.target.closest('[data-daytag]');
+    if (tg) { S.feelOpen = true; await setDayTag(today(), tg.dataset.daytag); renderDayCard(); renderOutlook(); return; }
     if (ev.target.closest('[data-act="feel-catchup"]')) openFeelCatchup();
   };
 }
@@ -365,10 +399,23 @@ function openFeelCatchup() {
   });
 }
 
+// Pure: for each tag, how the days with it were rated compared with the days without it (rated days only).
+export function tagStats(ratings, tagMap) {
+  const out = [];
+  for (const t of DAYTAGS) {
+    const w = []; const wo = [];
+    for (const [d, r] of ratings) (tagMap.get(d) && tagMap.get(d).has(t.k) ? w : wo).push(r);
+    if (w.length < 4 || wo.length < 4) continue;
+    const mw = w.reduce((a, b) => a + b, 0) / w.length; const mo = wo.reduce((a, b) => a + b, 0) / wo.length;
+    if (Math.abs(mw - mo) >= 0.4) out.push({ tag: t, withN: w.length, withoutN: wo.length, withAvg: mw, withoutAvg: mo, diff: mw - mo });
+  }
+  return out.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 4);
+}
+
 // ---------------------------------------------------------------- today's outlook
 // A plain-rules heads-up at the top of the Log tab. It only uses what has been logged, compares with this
 // child's own recent sleep, and always lists its reasons. It never predicts; it says "may".
-export function outlook(all, nights, ratings, todayStr, nowHour) {
+export function outlook(all, nights, ratings, todayStr, nowHour, tagMap = new Map()) {
   const reasons = []; const tips = new Set();
   const byWake = new Map(nights.map((n) => [n.wakeDate, n]));
   const base = nights.filter((n) => n.wakeDate < todayStr && n.wakeDate >= addDays(todayStr, -15));
@@ -399,6 +446,11 @@ export function outlook(all, nights, ratings, todayStr, nowHour) {
     if (!anyToday) { reasons.push('No food logged yet today.'); tips.add('A snack soon could help, and low energy can make requests harder.'); }
     else if (lastMin != null && nowHour * 60 - lastMin >= 240) { reasons.push(`No food logged since ${fmtTime(t)}.`); tips.add('A snack soon could help, and low energy can make requests harder.'); }
   }
+  const tt = tagMap.get(todayStr) || new Set();
+  if (tt.has('unwell')) { reasons.push('Marked unwell today.'); tips.add('Unwell days are usually harder. Keeping requests few and simple can help.'); strong = true; }
+  if (tt.has('changed')) { reasons.push('Routine changed today.'); tips.add('Extra warning before each switch can help when the routine is different.'); }
+  const tagDays = Array.from(tagMap.keys()).filter((d) => d >= addDays(todayStr, -14) && d < todayStr).length;
+  if (tagDays >= 4 && nowHour >= 16 && !tt.has('connect')) { reasons.push('No one-on-one time logged yet today.'); tips.add('Even 10 minutes of one-on-one time before the evening routine can help.'); }
   if (!reasons.length) return null;
   return { level: strong || reasons.length >= 2 ? 'harder' : 'note', reasons, tips: Array.from(tips).slice(0, 2) };
 }
@@ -407,7 +459,7 @@ function renderOutlook() {
   const off = !!(S.outlook && S.outlook.off) || (S.outlook && S.outlook.hideDay === today());
   if (isHelper() || off) { box.innerHTML = ''; return; }
   const all = live();
-  const o = outlook(all, sleepNights(all), dayRatings(dayfeelEntries()), today(), new Date().getHours());
+  const o = outlook(all, sleepNights(all), dayRatings(dayfeelEntries()), today(), new Date().getHours(), dayTagMap(dayEntries()));
   if (!o) { box.innerHTML = ''; return; }
   box.innerHTML = `<div class="card outlook ${o.level}" role="region" aria-label="Today's outlook">
     <h3 class="card-title">${o.level === 'harder' ? 'Today may be a bit harder' : 'Worth knowing today'}</h3>
@@ -534,11 +586,31 @@ function renderTab() {
 function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderOutlook(); }
 
 // ---------------------------------------------------------------- entry form
+// ---- people (shared): partner, carers, family. Stored in the shared profile so every phone sees the same list.
+const PEOPLE_ROLES = [['parent', '👤', 'Parent'], ['family', '👪', 'Family'], ['carer', '🤲', 'Carer'], ['teacher', '🏫', 'Teacher or daycare'], ['other', '💬', 'Other']];
+const PEOPLE_ROLE = Object.fromEntries(PEOPLE_ROLES.map(([k, em, l]) => [k, { em, label: l }]));
+export function cleanPeople(m) {
+  const out = {};
+  Object.keys(m && typeof m === 'object' ? m : {}).sort().forEach((id) => {
+    const x = m[id]; if (!/^[a-f0-9]{8,40}$/.test(id) || !x || typeof x !== 'object') return;
+    const name = String(x.name || '').trim().slice(0, 40); if (!name) return;
+    out[id] = { name, role: PEOPLE_ROLE[x.role] ? x.role : 'other', removed: !!x.removed, updatedAt: +x.updatedAt || 0 };
+  });
+  return out;
+}
+export function mergePeople(a, b) {
+  const o = cleanPeople(a); const r = cleanPeople(b);
+  for (const id of Object.keys(r)) if (!o[id] || r[id].updatedAt > o[id].updatedAt) o[id] = r[id];
+  return o;
+}
+const peopleList = (all) => Object.entries(cleanPeople(S.profile.people)).filter(([, x]) => all || !x.removed).sort((a, b) => a[1].name.localeCompare(b[1].name));
+async function savePeople(map) { S.profile = { ...S.profile, people: cleanPeople(map), updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(300); }
 function parentNames(extra) {
   const names = [];
   const add = (n) => { n = String(n || '').trim(); if (n && !names.includes(n)) names.push(n); };
   add(S.myName || 'Me');
   Object.values(S.members).sort((a, b) => (b.at || 0) - (a.at || 0)).forEach((m) => add(m.name));
+  if (!isHelper()) peopleList(false).filter(([, x]) => x.role === 'parent').forEach(([, x]) => add(x.name));
   if (names.length === 1) add('Partner');
   add(extra);
   return names;
@@ -577,11 +649,14 @@ function formHTML(st, e, mode) {
 
 function sourceChipsHTML(st) {
   const chip = (src, name, em, label, on) => `<button type="button" class="chip" data-src="${src}"${name ? ` data-name="${esc(name)}"` : ''} aria-pressed="${on}"><span aria-hidden="true">${em}</span>${esc(label)}</button>`;
-  const rest = (skip) => SOURCES.filter((s) => !skip.includes(s.k)).map((s) => chip(s.k, '', s.em, s.label, st.src === s.k)).join('');
+  const rest = (skip) => SOURCES.filter((s) => !skip.includes(s.k)).map((s) => chip(s.k, '', s.em, s.label, st.src === s.k && !st.srcName)).join('');
   if (isHelper()) { const me = S.myName || 'Me'; return chip('family', me, SRC.family.em, me, st.src === 'family') + rest(['parent', 'family']); }
   const parentChips = parentNames(st.src === 'parent' ? st.srcName : '').map((n) => chip('parent', n, '👤', n, st.src === 'parent' && st.srcName === n)).join('');
-  const fam = st.src === 'family' ? st.srcName : '';
-  return parentChips + chip('family', fam, SRC.family.em, fam || SRC.family.label, st.src === 'family') + rest(['parent', 'family']);
+  const people = peopleList(false).filter(([, x]) => x.role !== 'parent');
+  const named = new Set(people.map(([, x]) => x.name));
+  const fam = st.src === 'family' && !named.has(st.srcName) ? st.srcName : '';
+  const personChips = people.map(([, x]) => chip(x.role, x.name, PEOPLE_ROLE[x.role].em, x.name, st.src === x.role && st.srcName === x.name)).join('');
+  return parentChips + personChips + chip('family', fam, SRC.family.em, fam || SRC.family.label, st.src === 'family' && !named.has(st.srcName)) + rest(['parent', 'family']);
 }
 function refreshSourceChips(el) {
   if (!el || !el._st) return;
@@ -882,7 +957,7 @@ function mountForm(el, entry, mode) {
   const st = {
     mode, id: mode === 'edit' ? e.id : null,
     cat: e.cat || '', src,
-    srcName: src === 'parent' ? (e.srcName || (mode === 'edit' ? e.by : '') || S.myName || 'Me') : src === 'family' ? (e.srcName || (isHelper() ? S.myName || 'Me' : '')) : '',
+    srcName: src === 'parent' ? (e.srcName || (mode === 'edit' ? e.by : '') || S.myName || 'Me') : src === 'family' ? (e.srcName || (isHelper() ? S.myName || 'Me' : '')) : (e.srcName || ''),
     sev: e.sev || 0,
     extra: { temp: e.temp || '', height: e.height || '', weight: e.weight || '', med: e.med || '', dose: e.dose || '', time: e.time || (mode === 'new' && !('time' in e) ? nowHHMM() : ''), awake: e.awake || '' },
     timeTouched: mode === 'edit' || !!e.timeTouched, dateTouched: mode === 'edit' || !!e.dateTouched, mountDate: '', autoTime: '',
@@ -1131,7 +1206,7 @@ async function saveForm(el) {
   const prev = st.id ? S.entries.get(st.id) : null;
   const e = prev && !prev.deleted ? { ...prev } : { id: Sync.randomId(12), createdAt: now, by: S.myName || '', byDev: S.deviceId };
   Object.assign(e, {
-    date, tod, cat: st.cat, src: st.src, srcName: st.src === 'parent' || st.src === 'family' ? st.srcName : '',
+    date, tod, cat: st.cat, src: st.src, srcName: st.srcName || '',
     title: title.slice(0, 160), notes: notes.slice(0, 8000), sev: NO_CONCERN.has(st.cat) ? 1 : st.sev || 0, updatedAt: now,
   });
   const keep = [...(EXTRA_FIELDS[st.cat] || []), 'time'];
@@ -1172,7 +1247,7 @@ async function saveBatch(el) {
   for (const b of st.batch) {
     const e = {
       id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId,
-      date, tod, cat: st.cat, src: st.src, srcName: st.src === 'parent' || st.src === 'family' ? st.srcName : '',
+      date, tod, cat: st.cat, src: st.src, srcName: st.srcName || '',
       title: (title || b.title || '').slice(0, 160), notes: notes.slice(0, 8000), sev: NO_CONCERN.has(st.cat) ? 1 : st.sev || 0, med: b.med,
     };
     if (time) e.time = time;
@@ -1684,6 +1759,13 @@ function dayFeelChartSVG(ratings, nights) {
   });
   return svg + '</svg>';
 }
+function tagSectionHTML(ratings) {
+  const tm = dayTagMap(dayEntries()); const stats = tagStats(ratings, tm);
+  const tagged = Array.from(tm.keys()).length;
+  if (!stats.length) return tagged ? '<p class="hint">Once a few more days are tagged and rated, this will show which of the things you tap seem to go with calmer or rougher days.</p>' : '';
+  const f = (n) => (Math.round(n * 10) / 10).toFixed(1);
+  return `<h4 class="feel-sub">What goes with calmer days</h4><ul class="feel-tags">${stats.map((x) => `<li><b>${x.tag.em} ${esc(x.tag.label)}</b>: days with it were ${x.diff < 0 ? 'calmer' : 'rougher'} (average ${f(x.withAvg)} compared with ${f(x.withoutAvg)}, over ${x.withN} and ${x.withoutN} days).</li>`).join('')}</ul><p class="hint">Days are scored 1 (calm and easy) to 4 (hard). Shown only when there are at least 4 days with and without each tap.</p>`;
+}
 function dayFeelCardHTML(all) {
   const ratings = dayRatings(dayfeelEntries());
   if (isHelper() || !ratings.size) return '';
@@ -1712,6 +1794,7 @@ function dayFeelCardHTML(all) {
   return `<div class="card"><h3 class="card-title">Sleep and how days felt</h3>
     ${chart ? `${chart}${legend}<p class="lab-tip" data-tip="sleep" aria-live="polite"></p><p class="hint">Each bar is the sleep before that day, coloured by how the day felt. Tap one for details.</p>` : ''}
     ${body}
+    ${tagSectionHTML(ratings)}
     <p class="hint">This shows what goes together, not what causes what. Illness, growth spurts and changes at home can affect both sleep and mood, and a few weeks of ratings is a small sample. If sleep stays low or things get worse, it's worth raising with your GP.</p></div>`;
 }
 const recentStart14 = () => addDays(today(), -13);
@@ -2192,14 +2275,19 @@ async function mergeRemote(payloads) {
       if (!l || newer(r, l)) { S.entries.set(r.id, r); put.push(r); changed++; }
     }
     if (p.profile && (p.profile.updatedAt || 0) > (S.profile.updatedAt || 0)) {
-      const fam = S.profile.family;
+      const fam = S.profile.family; const ppl = S.profile.people;
       S.profile = { childName: String(p.profile.childName || ''), updatedAt: p.profile.updatedAt };
       if (fam) S.profile.family = fam;
+      if (ppl) S.profile.people = ppl;
       if (['3-5', '5-13', 'off'].includes(p.profile.sleepGuide)) S.profile.sleepGuide = p.profile.sleepGuide;
       if (AGE_GROUPS[p.profile.nrvAge]) S.profile.nrvAge = p.profile.nrvAge;
       if (p.profile.childSex === 'girl' || p.profile.childSex === 'boy') S.profile.childSex = p.profile.childSex;
       if (/^\d{4}-(0[1-9]|1[0-2])$/.test(p.profile.childBirth || '')) S.profile.childBirth = p.profile.childBirth;
       await kvSet('profile', S.profile); changed++;
+    }
+    if (p.profile && p.profile.people && !isHelper()) {
+      const mp = mergePeople(S.profile.people, p.profile.people);
+      if (JSON.stringify(mp) !== JSON.stringify(cleanPeople(S.profile.people))) { S.profile = { ...S.profile, people: mp }; await kvSet('profile', S.profile); changed++; }
     }
     if (p.profile && p.profile.family) {
       const merged = mergeFamilyConfig(S.profile.family, p.profile.family);
@@ -2446,6 +2534,7 @@ async function openSettings() {
         <div class="btn-stack"><button type="button" class="btn dark" data-act="st-new">Set up sync</button><button type="button" class="btn ghost" data-act="st-join">Join a shared log</button></div>
       `}
     </div>
+    ${peopleSectionHTML()}
     ${S.sync ? familySectionHTML() : ''}
     <div class="set-section">
       <h3>Backup file</h3>
@@ -2495,6 +2584,8 @@ async function openSettings() {
         else if (a === 'st-join') openJoin(false);
         else if (a === 'st-backup') openBackup();
         else if (a === 'st-restore') openRestore();
+        else if (a === 'ppl-add') openPersonSheet(null, btn.dataset.name || '');
+        else if (btn.dataset.pplEdit) openPersonSheet(btn.dataset.pplEdit, '');
         else if (a === 'fam-setup') openFamilySetup(false);
         else if (a === 'fam-key') openFamilySetup(true);
         else if (a === 'fam-add') openAddHelper();
@@ -2621,11 +2712,19 @@ function cleanCare(list) {
     const start = +r.start; const end = +r.end;
     if (!(start > 0) || !(end > start) || end - start > 7 * 86400000) continue;
     seen.add(r.id);
-    out.push({ id: r.id, start, end, kind: CARE_KIND[r.kind] ? r.kind : 'other', note: String(r.note || '').slice(0, 200), createdAt: +r.createdAt || start, updatedAt: +r.updatedAt || end });
+    out.push({ id: r.id, start, end, who: /^[a-f0-9]{8,40}$/.test(r.who || '') ? r.who : '', kind: CARE_KIND[r.kind] ? r.kind : 'other', note: String(r.note || '').slice(0, 200), createdAt: +r.createdAt || start, updatedAt: +r.updatedAt || end });
   }
   return out;
 }
-function cleanRun(r) { return r && +r.start > 0 && +r.start <= Date.now() + 60000 ? { start: +r.start, kind: CARE_KIND[r.kind] ? r.kind : 'hands' } : null; }
+function cleanRun(r) { return r && +r.start > 0 && +r.start <= Date.now() + 60000 ? { start: +r.start, kind: CARE_KIND[r.kind] ? r.kind : 'hands', who: /^[a-f0-9]{8,40}$/.test(r.who || '') ? r.who : '' } : null; }
+const whoName = (id) => { if (!id) return S.myName || 'Me'; const x = cleanPeople(S.profile.people)[id]; return x ? x.name : 'Someone'; };
+const whoOptions = () => [['', S.myName || 'Me'], ...peopleList(false).map(([id, x]) => [id, x.name])];
+const whoChips = (cur, attr) => whoOptions().map(([id, n]) => `<button type="button" class="chip" ${attr}="${esc(id)}" aria-pressed="${(cur || '') === id}">${esc(n)}</button>`).join('');
+export function careByPerson(list) {
+  const m = new Map();
+  for (const r of list) { const w = r.who || ''; const x = m.get(w) || { total: 0, kinds: {}, n: 0 }; const mins = (r.end - r.start) / 60000; x.total += mins; x.n++; x.kinds[r.kind] = (x.kinds[r.kind] || 0) + mins; m.set(w, x); }
+  return m;
+}
 const saveCare = () => kvSet('care', S.care);
 async function mergeCare(list) {
   let n = 0;
@@ -2643,6 +2742,15 @@ const msHHMM = (ms) => { const d = new Date(ms); return `${pad(d.getHours())}:${
 const toMs = (date, hhmm) => { const [y, m, d] = date.split('-').map(Number); const t = /^(\d{1,2}):(\d{2})/.exec(hhmm || ''); return t ? new Date(y, m - 1, d, +t[1], +t[2]).getTime() : NaN; };
 const clock = (ms) => { const t = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(t / 3600)}:${pad(Math.floor(t / 60) % 60)}:${pad(t % 60)}`; };
 
+function personStatsHTML(list) {
+  const m = careByPerson(list); if (m.size < 2 && !peopleList(false).length) return '';
+  if (!list.length) return '';
+  const rows = Array.from(m.entries()).sort((a, b) => b[1].total - a[1].total);
+  const all = rows.reduce((t, [, x]) => t + x.total, 0) || 1;
+  const short = { hands: 'hands-on', settle: 'settling', appt: 'visits', admin: 'admin', other: 'other' };
+  return `<h4 class="feel-sub">Who looked after ${esc(S.profile.childName || 'your child')}</h4><div class="bars time-bars">${rows.map(([w, x]) => `<div class="bar"><span>${esc(whoName(w))}</span><div class="track"><div class="fill" data-w="${Math.max(2, Math.round((x.total / rows[0][1].total) * 100))}"></div></div><span class="n time-n">${careDur(x.total)}</span></div>
+    <p class="hint person-kinds">${Math.round((x.total / all) * 100)}% of the time · ${x.n} session${x.n === 1 ? '' : 's'}${Object.entries(x.kinds).sort((a, b) => b[1] - a[1]).map(([k, mm]) => ` · ${short[k]} ${careDur(mm)}`).join('')}</p>`).join('')}</div>`;
+}
 function renderTime() {
   const box = $('#time-body'); const run = S.careRun;
   const n = +S.timeRange; const from = addDays(today(), -(n - 1));
@@ -2654,13 +2762,14 @@ function renderTime() {
   const kindChips = (cur) => CARE_KINDS.map(([k, em, l]) => `<button type="button" class="chip solid" data-ckind="${k}" aria-pressed="${cur === k}"><span aria-hidden="true">${em}</span>${l}</button>`).join('');
   const timer = run
     ? `<div class="card timer-card"><span class="label">Timing now</span><div class="timer-clock" data-elapsed>${clock(Date.now() - run.start)}</div>
-        <div class="timer-kind">${CARE_KIND[run.kind].em} ${CARE_KIND[run.kind].label} · started ${esc(fmtTime(msHHMM(run.start)))}</div>
+        <div class="timer-kind">${CARE_KIND[run.kind].em} ${CARE_KIND[run.kind].label}${whoOptions().length > 1 ? ` · ${esc(whoName(run.who))}` : ''} · started ${esc(fmtTime(msHHMM(run.start)))}</div>
         <div class="field"><label class="label" for="cr-note">Note (optional)</label><input class="input" id="cr-note" maxlength="200" autocomplete="off" placeholder="e.g. Settled after a story"></div>
         <div class="btn-row"><button type="button" class="btn ghost" data-act="care-cancel">Discard</button><button type="button" class="btn primary" data-act="care-stop">Stop and save</button></div></div>`
     : `<div class="card timer-card"><span class="label">What are you doing?</span><div class="chips" role="group">${kindChips(S.careKind || 'hands')}</div>
+        ${whoOptions().length > 1 ? `<span class="label mt10">Who is doing it?</span><div class="chips" role="group" data-whos>${whoChips(S.careWho, 'data-cwho')}</div>` : ''}
         <button type="button" class="btn primary block" data-act="care-start">Start timing</button></div>`;
   const days = Array.from(byDay.entries()).map(([d, rs]) => `<div class="time-day"><h3>${d === today() ? 'Today' : d === addDays(today(), -1) ? 'Yesterday' : esc(fmtDayLong(d))}</h3><span>${careDur(rs.reduce((s, r) => s + careMins(r), 0))}</span></div>`
-    + rs.map((r) => `<button type="button" class="time-row" data-care="${esc(r.id)}"><span><b>${CARE_KIND[r.kind].em} ${CARE_KIND[r.kind].label}</b><small>${esc(fmtTime(msHHMM(r.start)))} to ${esc(fmtTime(msHHMM(r.end)))}${msDate(r.end) !== d ? ' (next day)' : ''}${r.note ? ` · ${esc(r.note)}` : ''}</small></span><span class="dur">${careDur(careMins(r))}</span></button>`).join('')).join('');
+    + rs.map((r) => `<button type="button" class="time-row" data-care="${esc(r.id)}"><span><b>${CARE_KIND[r.kind].em} ${CARE_KIND[r.kind].label}${peopleList(false).length || r.who ? ` · ${esc(whoName(r.who))}` : ''}</b><small>${esc(fmtTime(msHHMM(r.start)))} to ${esc(fmtTime(msHHMM(r.end)))}${msDate(r.end) !== d ? ' (next day)' : ''}${r.note ? ` · ${esc(r.note)}` : ''}</small></span><span class="dur">${careDur(careMins(r))}</span></button>`).join('')).join('');
   box.innerHTML = `
     <div class="time-private"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Only on this phone. Your partner and family can't see this, and it never syncs. It's included in backup files you make.</span></div>
     ${timer}
@@ -2668,6 +2777,7 @@ function renderTime() {
     <div class="card mt10">
       <div class="time-total"><div class="stat"><b>${total ? careDur(total) : '0'}</b><span>Total</span></div><div class="stat"><b>${total ? careDur(total / n) : '0'}</b><span>A day on average</span></div><div class="stat"><b>${byDay.size}</b><span>Days with time</span></div></div>
       ${byKind.length ? `<div class="bars time-bars">${byKind.map(([k, m]) => `<div class="bar"><span>${CARE_KIND[k].em} ${({ hands: 'Hands-on', settle: 'Settling', appt: 'Visits', admin: 'Admin', other: 'Other' })[k]}</span><div class="track"><div class="fill" data-w="${Math.max(2, Math.round((m / maxK) * 100))}"></div></div><span class="n time-n">${careDur(m)}</span></div>`).join('')}</div>` : '<p class="hint">Start the timer, or add time you forgot to log. Totals appear here.</p>'}
+      ${personStatsHTML(list)}
     </div>
     <button type="button" class="btn dark block" data-act="care-add">Add time I forgot to log</button>
     ${days}
@@ -2680,11 +2790,12 @@ function renderTime() {
     const b = ev.target.closest('button'); if (!b) return;
     if (b.dataset.ckind) { S.careKind = b.dataset.ckind; renderTime(); }
     else if (b.dataset.trange) { S.timeRange = b.dataset.trange; renderTime(); }
-    else if (b.dataset.act === 'care-start') { S.careRun = { start: Date.now(), kind: S.careKind || 'hands' }; await kvSet('careRun', S.careRun); renderTime(); }
+    else if (b.dataset.cwho !== undefined) { S.careWho = b.dataset.cwho; renderTime(); }
+    else if (b.dataset.act === 'care-start') { S.careRun = { start: Date.now(), kind: S.careKind || 'hands', who: S.careWho || '' }; await kvSet('careRun', S.careRun); renderTime(); }
     else if (b.dataset.act === 'care-cancel') { S.careRun = null; await kvDel('careRun'); renderTime(); toast('Discarded'); }
     else if (b.dataset.act === 'care-stop') {
       const r = S.careRun; if (!r) return; const end = Date.now();
-      const item = { id: Sync.randomId(9), start: r.start, end: Math.max(end, r.start + 1000), kind: r.kind, note: ($('#cr-note', box).value || '').trim().slice(0, 200), createdAt: end, updatedAt: end };
+      const item = { id: Sync.randomId(9), start: r.start, end: Math.max(end, r.start + 1000), who: r.who || '', kind: r.kind, note: ($('#cr-note', box).value || '').trim().slice(0, 200), createdAt: end, updatedAt: end };
       S.care.push(item); S.careRun = null; await saveCare(); await kvDel('careRun'); renderTime();
       toast(`Saved ${careDur(careMins(item))}`, { label: 'Undo', fn: async () => { S.care = S.care.filter((x) => x.id !== item.id); await saveCare(); renderTime(); } });
     }
@@ -2692,7 +2803,7 @@ function renderTime() {
     else if (b.dataset.care) openCareSheet(S.care.find((x) => x.id === b.dataset.care));
     else if (b.dataset.act === 'care-csv') {
       const cell = (v) => { v = String(v ?? ''); if (/^[=+\-@\t\r]/.test(v)) v = "'" + v; return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
-      const rows = [['Date', 'Start', 'End', 'Minutes', 'Type', 'Note'], ...S.care.slice().sort((a, c) => a.start - c.start).map((r) => [msDate(r.start), msHHMM(r.start), msHHMM(r.end), Math.round(careMins(r)), CARE_KIND[r.kind].label, r.note])];
+      const rows = [['Date', 'Start', 'End', 'Minutes', 'Who', 'Type', 'Note'], ...S.care.slice().sort((a, c) => a.start - c.start).map((r) => [msDate(r.start), msHHMM(r.start), msHHMM(r.end), Math.round(careMins(r)), whoName(r.who), CARE_KIND[r.kind].label, r.note])];
       const ok = await shareFile(new Blob([rows.map((r) => r.map(cell).join(',')).join('\n')], { type: 'text/csv' }), `care-time-${today()}.csv`, 'text/csv');
       if (ok) toast('Saved. This file isn\'t locked, so keep it somewhere private.');
     }
@@ -2701,7 +2812,7 @@ function renderTime() {
 
 function openCareSheet(item) {
   const d0 = item ? msDate(item.start) : today();
-  let kind = item ? item.kind : 'hands';
+  let kind = item ? item.kind : 'hands'; let who = item ? item.who || '' : S.careWho || '';
   openSheet(item ? 'Edit time' : 'Add time', `
     <div class="row2 field">
       <div><label class="label" for="ct-date">Date</label><input class="input" type="date" id="ct-date" max="${today()}" value="${esc(d0)}"></div>
@@ -2713,6 +2824,7 @@ function openCareSheet(item) {
     </div>
     <p class="hint">If it ends after midnight, just enter the later time. It will be counted as ending the next day.</p>
     <div class="field"><span class="label">Type</span><div class="chips" data-kinds>${CARE_KINDS.map(([k, em, l]) => `<button type="button" class="chip solid" data-ckind="${k}" aria-pressed="${kind === k}"><span aria-hidden="true">${em}</span>${l}</button>`).join('')}</div></div>
+    ${whoOptions().length > 1 ? `<div class="field"><span class="label">Who</span><div class="chips" data-whos>${whoChips(who, 'data-cwho')}</div></div>` : ''}
     <div class="field"><label class="label" for="ct-note">Note (optional)</label><input class="input" id="ct-note" maxlength="200" autocomplete="off" value="${esc(item ? item.note : '')}"></div>
     <div id="ct-msg" hidden></div>
     <button type="button" class="btn primary block" data-act="ct-save">${item ? 'Save changes' : 'Add'}</button>
@@ -2720,6 +2832,7 @@ function openCareSheet(item) {
     onMount: (b) => {
       b.onclick = async (ev) => {
         const btn = ev.target.closest('button'); if (!btn) return;
+        if (btn.dataset.cwho !== undefined) { who = btn.dataset.cwho; $$('[data-cwho]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === btn))); return; }
         if (btn.dataset.ckind) { kind = btn.dataset.ckind; $$('[data-ckind]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === btn))); return; }
         const msg = $('#ct-msg', b);
         if (btn.dataset.act === 'ct-del' && item) {
@@ -2734,9 +2847,46 @@ function openCareSheet(item) {
           if (e - s > 16 * 3600000) return showMsg(msg, 'warn', "That's over 16 hours. Check the times, or add it as separate blocks.");
           if (e > Date.now() + 60000) return showMsg(msg, 'warn', "That ends in the future. Use the timer for time that's still going.");
           const now = Date.now(); const note = $('#ct-note', b).value.trim().slice(0, 200);
-          if (item) Object.assign(item, { start: s, end: e, kind, note, updatedAt: now });
-          else S.care.push({ id: Sync.randomId(9), start: s, end: e, kind, note, createdAt: now, updatedAt: now });
+          if (item) Object.assign(item, { start: s, end: e, who, kind, note, updatedAt: now });
+          else S.care.push({ id: Sync.randomId(9), start: s, end: e, who, kind, note, createdAt: now, updatedAt: now });
           await saveCare(); closeSheet(); renderTime(); toast(item ? 'Saved' : `Added ${careDur((e - s) / 60000)}`);
+        }
+      };
+    },
+  });
+}
+
+// ---------------------------------------------------------------- people
+function peopleSectionHTML() {
+  if (isHelper()) return '';
+  const list = peopleList(false);
+  const known = new Set(list.map(([, x]) => x.name.toLowerCase())); known.add((S.myName || '').toLowerCase());
+  const suggest = Object.values(S.members).map((m) => String(m.name || '').trim()).filter((n) => n && !known.has(n.toLowerCase()));
+  return `<div class="set-section"><h3>People who help</h3>
+    <p class="hint intro">Add your partner, carers and family here. Everyone sharing this log sees the same list, and can pick them under "who" when logging.</p>
+    ${list.length ? `<div class="card kv-card">${list.map(([id, x]) => `<div class="kv helper-row"><span><b>${esc(x.name)}</b><small>${esc(PEOPLE_ROLE[x.role].label)}</small></span><span class="mini-links"><button type="button" data-ppl-edit="${esc(id)}">Edit</button></span></div>`).join('')}</div>` : '<p class="hint">No one added yet.</p>'}
+    <div class="btn-stack">${suggest.slice(0, 2).map((n) => `<button type="button" class="btn ghost" data-act="ppl-add" data-name="${esc(n)}">Add ${esc(n)}</button>`).join('')}<button type="button" class="btn dark" data-act="ppl-add">Add a person</button></div></div>`;
+}
+function openPersonSheet(id, presetName) {
+  const cur = id ? cleanPeople(S.profile.people)[id] : null; let role = cur ? cur.role : (presetName ? 'parent' : 'carer');
+  openSheet(cur ? 'Edit person' : 'Add a person', `
+    <div class="field"><label class="label" for="pp-name">Name</label><input class="input" id="pp-name" maxlength="40" autocomplete="off" value="${esc(cur ? cur.name : presetName)}"></div>
+    <div class="field"><span class="label">Who are they?</span><div class="chips" data-roles>${PEOPLE_ROLES.map(([k, em, l]) => `<button type="button" class="chip" data-prole="${k}" aria-pressed="${role === k}"><span aria-hidden="true">${em}</span>${l}</button>`).join('')}</div></div>
+    <div id="pp-msg" hidden></div>
+    <button type="button" class="btn primary block" data-act="pp-save">${cur ? 'Save changes' : 'Add'}</button>
+    ${cur ? '<button type="button" class="btn danger block mt10" data-act="pp-remove">Remove from lists</button><p class="hint">Their past entries and time keep their name.</p>' : ''}`, {
+    onMount: (b) => {
+      b.onclick = async (ev) => {
+        const btn = ev.target.closest('button'); if (!btn) return;
+        if (btn.dataset.prole) { role = btn.dataset.prole; $$('[data-prole]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === btn))); return; }
+        const all = cleanPeople(S.profile.people);
+        if (btn.dataset.act === 'pp-remove' && id) { all[id] = { ...all[id], removed: true, updatedAt: Date.now() }; await savePeople(all); closeSheet(); openSettings(); toast('Removed'); }
+        else if (btn.dataset.act === 'pp-save') {
+          const name = $('#pp-name', b).value.trim().slice(0, 40);
+          if (!name) return showMsg($('#pp-msg', b), 'warn', 'Add a name.');
+          if (Object.entries(all).some(([k, x]) => k !== id && !x.removed && x.name.toLowerCase() === name.toLowerCase())) return showMsg($('#pp-msg', b), 'warn', 'Someone with that name is already on the list.');
+          const pid = id || Sync.randomId(9); all[pid] = { name, role, removed: false, updatedAt: Date.now() };
+          await savePeople(all); closeSheet(); openSettings(); refreshSourceChips($('#log-form')); toast('Saved');
         }
       };
     },

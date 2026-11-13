@@ -576,3 +576,26 @@ a.btn { text-decoration: none; }
 .time-bars .n { text-align: right; white-space: nowrap; }
 .time-total .stat { padding: 12px 4px; }
 .time-total .stat b { font-size: 1.15rem; line-height: 1.15; }
+
+/* how the day felt */
+.feel-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.feel { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; min-height: 58px; border: 1.5px solid var(--line); border-radius: var(--r-md); background: var(--card); color: var(--ink); font: inherit; cursor: pointer; }
+.feel .em { font-size: 1.35rem; line-height: 1; }
+.feel .fl { font-size: .68rem; line-height: 1.15; text-align: center; color: var(--muted); }
+.feel[aria-pressed="true"] { border-color: var(--terracotta); background: color-mix(in srgb, var(--terracotta) 12%, var(--card)); }
+.feel[aria-pressed="true"] .fl { color: var(--terracotta-ink); font-weight: 600; }
+.feel-hint { margin: 10px 0 0; }
+.link-btn { background: none; border: 0; padding: 0; font: inherit; color: var(--terracotta-ink); text-decoration: underline; cursor: pointer; }
+.feel-day { padding: 8px 0; border-top: 1px solid var(--line); }
+.feel-day:first-of-type { border-top: 0; }
+.feel-date { font-size: .84rem; font-weight: 600; margin-bottom: 6px; }
+.feel-bar.fe1, .sw.fe1 { fill: var(--sage); background: var(--sage); }
+.feel-bar.fe2, .sw.fe2 { fill: var(--sky); background: var(--sky); }
+.feel-bar.fe3, .sw.fe3 { fill: var(--gold); background: var(--gold); }
+.feel-bar.fe4, .sw.fe4 { fill: var(--alert); background: var(--alert); }
+.feel-bar.fe0 { fill: var(--line); }
+.feel-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 6px 0 0; font-size: .72rem; color: var(--muted); }
+.feel-legend .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; }
+.feel-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+.feel-compare > div { background: var(--warm); border-radius: var(--r-md); padding: 10px; display: flex; flex-direction: column; gap: 3px; font-size: .8rem; }
+.feel-compare b { font-family: var(--serif); font-weight: 400; font-size: .98rem; }

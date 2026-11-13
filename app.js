@@ -3,7 +3,7 @@ import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standardUnits } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 
-export const APP_VERSION = '1.10.1';
+export const APP_VERSION = '1.11.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -271,7 +271,95 @@ const S = {
   // Care time: a private record on this phone only. It is never added to the synced log or any sync file.
   care: [], careRun: null, timeRange: '7',
 };
-const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date);
+const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel');
+
+// ---------------------------------------------------------------- how the day felt
+// One tap a day. Ratings are stored as small synced entries (cat 'dayfeel') that stay out of History, counts,
+// the PDF and the CSV, and feed the sleep comparison in Insights.
+export const DAYFEEL = [[1, '😌', 'Calm and easy'], [2, '🙂', 'Mostly fine'], [3, '😣', 'Bumpy'], [4, '😖', 'Hard']];
+const dayfeelEntries = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.cat === 'dayfeel' && e.date && e.rating >= 1 && e.rating <= 4);
+// date -> average of everyone's rating that day
+export function dayRatings(list) {
+  const m = new Map();
+  for (const e of list) { const r = m.get(e.date) || { sum: 0, n: 0 }; r.sum += e.rating; r.n++; m.set(e.date, r); }
+  return new Map(Array.from(m, ([d, r]) => [d, r.sum / r.n]));
+}
+const myDayfeel = (date) => dayfeelEntries().find((e) => e.date === date && e.byDev === S.deviceId);
+async function setDayFeel(date, rating) {
+  const mine = myDayfeel(date); const now = Date.now(); let e;
+  if (mine && mine.rating === rating) e = { id: mine.id, deleted: true, updatedAt: now, by: S.myName || '' };
+  else if (mine) e = { ...mine, rating, updatedAt: now };
+  else e = { id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, date, tod: 'Evening', cat: 'dayfeel', rating, src: 'parent', srcName: S.myName || 'Me', title: '', notes: '', sev: 0 };
+  S.entries.set(e.id, e); await putEntries([e]); scheduleSync();
+}
+function dayFeelButtons(date) {
+  const mine = myDayfeel(date);
+  return DAYFEEL.map(([v, em, l]) => `<button type="button" class="feel" data-feel="${v}" data-date="${date}" aria-pressed="${!!mine && mine.rating === v}" aria-label="${esc(l)}"><span class="em" aria-hidden="true">${em}</span><span class="fl">${esc(l)}</span></button>`).join('');
+}
+function renderDayCard() {
+  const box = $('#dayfeel-card'); if (!box) return;
+  if (isHelper()) { box.innerHTML = ''; return; }
+  const t = today();
+  const others = dayfeelEntries().filter((e) => e.date === t && e.byDev !== S.deviceId);
+  const alsoText = others.length ? `${others.map((e) => `${esc(e.srcName || e.by || 'Partner')}: ${esc(DAYFEEL[e.rating - 1][2].toLowerCase())}`).join(', ')}` : '';
+  box.innerHTML = `<div class="card feel-card"><h3 class="card-title">How did today feel?</h3>
+    <div class="feel-row" role="group" aria-label="How did today feel?">${dayFeelButtons(t)}</div>
+    <p class="hint feel-hint">${alsoText ? `Also rated: ${alsoText}. ` : ''}Tap again to clear. <button type="button" class="link-btn" data-act="feel-catchup">Rate recent days</button></p></div>`;
+  box.onclick = async (ev) => {
+    const b = ev.target.closest('[data-feel]');
+    if (b) { await setDayFeel(b.dataset.date, +b.dataset.feel); renderDayCard(); if (S.tab === 'insights') renderInsights(); return; }
+    if (ev.target.closest('[data-act="feel-catchup"]')) openFeelCatchup();
+  };
+}
+function openFeelCatchup() {
+  const days = []; for (let i = 0; i < 21; i++) days.push(addDays(today(), -i));
+  openSheet('Rate recent days', `<p class="hint intro">Look back over the last few weeks and tap how each day felt. Even a rough guess helps the sleep comparison in Insights. Skip any you can't remember.</p>
+    ${days.map((d) => `<div class="feel-day" data-day="${d}"><div class="feel-date">${esc(fmtDayShort(d))}</div><div class="feel-row">${dayFeelButtons(d)}</div></div>`).join('')}`, {
+    full: true,
+    onMount: (b) => {
+      b.onclick = async (ev) => {
+        const f = ev.target.closest('[data-feel]'); if (!f) return;
+        await setDayFeel(f.dataset.date, +f.dataset.feel);
+        $('.feel-row', f.closest('.feel-day')).innerHTML = dayFeelButtons(f.dataset.date);
+        renderDayCard(); if (S.tab === 'insights') renderInsights();
+      };
+    },
+  });
+}
+
+// Pure: compares nights of sleep with how the following days felt.
+export function dayFeelStats(ratings, nights, todayStr) {
+  const byWake = new Map(nights.map((n) => [n.wakeDate, n]));
+  const rows = [];
+  for (const [d, r] of ratings) { const n = byWake.get(d); if (n) rows.push({ d, r, n }); }
+  const avg = (a, f) => (a.length ? a.reduce((x, y) => x + f(y), 0) / a.length : null);
+  const mk = (a) => (a.length ? { n: a.length, sleep: avg(a, (x) => x.n.mins), bed: clockAvg(a.map((x) => x.n.bed), true), rating: avg(a, (x) => x.r) } : null);
+  const easy = rows.filter((x) => x.r <= 2); const hard = rows.filter((x) => x.r >= 3);
+  const out = { rated: ratings.size, paired: rows.length, easy: mk(easy), hard: mk(hard), enough: easy.length >= 4 && hard.length >= 4 };
+  // Easiest stretch: the 14-day window with the lowest average rating (at least 7 rated days), compared with the last 14 days.
+  const days = Array.from(ratings.keys()).sort();
+  let best = null;
+  for (const start of days) {
+    const end = addDays(start, 13); if (end > todayStr) continue;
+    const inWin = days.filter((d) => d >= start && d <= end);
+    if (inWin.length < 7) continue;
+    const mean = inWin.reduce((a, d) => a + ratings.get(d), 0) / inWin.length;
+    if (!best || mean < best.mean - 1e-9) best = { start, end, mean, n: inWin.length };
+  }
+  const winStats = (a, b) => {
+    const rs = days.filter((d) => d >= a && d <= b); const ns = nights.filter((n) => n.wakeDate >= a && n.wakeDate <= b);
+    return { rated: rs.length, rating: rs.length ? rs.reduce((x, d) => x + ratings.get(d), 0) / rs.length : null, nights: ns.length, sleep: avg(ns, (n) => n.mins), bed: ns.length ? clockAvg(ns.map((n) => n.bed), true) : null };
+  };
+  const recentStart = addDays(todayStr, -13);
+  if (best && best.end < recentStart) {
+    out.best = { ...best, ...winStats(best.start, best.end) };
+    out.recent = winStats(recentStart, todayStr);
+    if (out.best.nights < 5 || out.recent.nights < 5 || out.recent.rated < 5) { out.best = null; out.recent = null; }
+  }
+  return out;
+}
+function dayFeelWord(r) { return r < 1.5 ? 'calm and easy' : r < 2.5 ? 'mostly fine' : r < 3.5 ? 'bumpy' : 'hard'; }
+const minsOfClock = (t) => { const [h, m] = t.split(':').map(Number); let v = h * 60 + m; if (v < 720) v += 1440; return v; };
 const isHelper = () => S.role === 'helper';
 const homeSrc = () => (isHelper() ? 'family' : 'parent');
 const syncOn = () => !!(isHelper() ? S.fam : S.sync);
@@ -317,6 +405,7 @@ function showMain(opts = {}) {
   show('main');
   $('#app').dataset.role = isHelper() ? 'helper' : 'parent';
   renderHeader();
+  renderDayCard();
   mountLogForm();
   switchTab(S.tab);
   updateSyncPill();
@@ -345,7 +434,7 @@ function renderTab() {
   else if (S.tab === 'export') renderExport();
   else if (S.tab === 'time') renderTime();
 }
-function renderDependent() { renderHeader(); renderTab(); }
+function renderDependent() { renderHeader(); renderTab(); renderDayCard(); }
 
 // ---------------------------------------------------------------- entry form
 function parentNames(extra) {
@@ -1467,6 +1556,60 @@ function sleepCardHTML(all) {
   </div>`;
 }
 
+function dayFeelChartSVG(ratings, nights) {
+  const byWake = new Map(nights.map((n) => [n.wakeDate, n]));
+  const slots = []; for (let i = 27; i >= 0; i--) { const d = addDays(today(), -i); slots.push({ d, n: byWake.get(d), r: ratings.get(d) }); }
+  if (!slots.some((x) => x.n && x.r)) return '';
+  const W = 320; const H = 130; const L = 4; const R = 8; const T = 8; const B = 22;
+  const maxM = Math.max(780, ...slots.filter((x) => x.n).map((x) => x.n.mins + 30));
+  const y = (m) => T + (1 - m / maxM) * (H - T - B);
+  const sw = (W - L - R) / slots.length; const bw = Math.max(3, sw * 0.7); const f1 = (n) => n.toFixed(1);
+  let svg = `<svg class="sleep-chart feel-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Hours slept before each of the last 28 days, coloured by how the day felt">`;
+  svg += `<line class="lab-base" x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}"></line>`;
+  slots.forEach((x, i) => {
+    const cx = L + i * sw + sw / 2;
+    if (x.n) {
+      const cls = x.r ? `fe${Math.min(4, Math.max(1, Math.round(x.r)))}` : 'fe0';
+      svg += `<rect class="feel-bar ${cls}" x="${f1(cx - bw / 2)}" y="${f1(y(x.n.mins))}" width="${f1(bw)}" height="${f1(H - B - y(x.n.mins))}" rx="1.5"></rect>`;
+      const label = `${fmtDayShort(x.d)}: slept ${fmtDur(x.n.mins)} the night before; ${x.r ? `the day felt ${dayFeelWord(x.r)}` : 'day not rated'}`;
+      svg += `<rect class="lab-hit" data-night="${esc(label)}" data-i="f${i}" x="${f1(L + i * sw)}" y="${T}" width="${f1(sw)}" height="${H - T - B}"></rect>`;
+    }
+    if (i === 0 || i === 14 || i === slots.length - 1) { const dt = parseYmd(x.d); svg += `<text class="lab-axis" x="${f1(cx)}" y="${H - 7}" text-anchor="middle">${dt.getDate()}/${dt.getMonth() + 1}</text>`; }
+  });
+  return svg + '</svg>';
+}
+function dayFeelCardHTML(all) {
+  const ratings = dayRatings(dayfeelEntries());
+  if (isHelper() || !ratings.size) return '';
+  const nights = sleepNights(all);
+  const st = dayFeelStats(ratings, nights, today());
+  const chart = dayFeelChartSVG(ratings, nights);
+  const legend = `<p class="feel-legend" aria-hidden="true">${DAYFEEL.map(([v, em, l]) => `<span><i class="sw fe${v}"></i>${l}</span>`).join('')}</p>`;
+  let body = '';
+  if (st.best && st.recent) {
+    const b = st.best; const r = st.recent;
+    const fmtRange = (a, c) => `${fmtDayShort(a)} to ${fmtDayShort(c)}`;
+    body += `<div class="feel-compare"><div><span class="label">Easiest stretch</span><b>${esc(fmtRange(b.start, b.end))}</b><span>Days were ${esc(dayFeelWord(b.rating))}. Slept ${esc(fmtDur(b.sleep))} on average, asleep around ${esc(fmtTime(b.bed))}.</span></div>
+      <div><span class="label">Last 14 days</span><b>${esc(fmtRange(recentStart14(), today()))}</b><span>Days were ${r.rating == null ? 'not rated' : esc(dayFeelWord(r.rating))}. Slept ${esc(fmtDur(r.sleep))} on average, asleep around ${esc(fmtTime(r.bed))}.</span></div></div>`;
+    const dS = b.sleep - r.sleep; const dB = minsOfClock(r.bed) - minsOfClock(b.bed);
+    const tips = [];
+    if (dS >= 30) tips.push(`Sleep is about ${fmtDur(Math.round(dS))} a night shorter than during the easiest stretch.`);
+    if (dB >= 20) tips.push(`Bedtime has drifted about ${dB} minutes later.`);
+    if (tips.length) body += `<div class="lab-note">${esc(tips.join(' '))} One thing to try: an earlier wind-down and bedtime for a week, then see whether the days ease.</div>`;
+  } else if (st.enough) {
+    const e = st.easy; const h = st.hard;
+    body += `<div class="feel-compare"><div><span class="label">Calm or mostly fine days</span><b>${e.n} days</b><span>Followed nights averaging ${esc(fmtDur(e.sleep))}, asleep around ${esc(fmtTime(e.bed))}.</span></div>
+      <div><span class="label">Bumpy or hard days</span><b>${h.n} days</b><span>Followed nights averaging ${esc(fmtDur(h.sleep))}, asleep around ${esc(fmtTime(h.bed))}.</span></div></div>`;
+  } else {
+    body += `<p class="hint intro">${st.rated} day${st.rated === 1 ? '' : 's'} rated so far, ${st.paired} with a night of sleep logged. About 4 calm-or-fine and 4 bumpy-or-hard days (each with sleep logged) are needed before a comparison is shown. "Rate recent days" on the Log tab is the quickest way to fill in the past few weeks.</p>`;
+  }
+  return `<div class="card"><h3 class="card-title">Sleep and how days felt</h3>
+    ${chart ? `${chart}${legend}<p class="lab-tip" data-tip="sleep" aria-live="polite"></p><p class="hint">Each bar is the sleep before that day, coloured by how the day felt. Tap one for details.</p>` : ''}
+    ${body}
+    <p class="hint">This shows what goes together, not what causes what. Illness, growth spurts and changes at home can affect both sleep and mood, and a few weeks of ratings is a small sample. If sleep stays low or things get worse, it's worth raising with your GP.</p></div>`;
+}
+const recentStart14 = () => addDays(today(), -13);
+
 function labCardHTML(all) {
   const series = labSeries(all); if (!series.length) return '';
   return `<div class="card"><h3 class="card-title">Blood tests</h3><p class="hint intro">Every result logged, newest test first. The shaded band is the normal range from the latest report. Tap a dot to see its value.</p>
@@ -1500,13 +1643,13 @@ function renderInsights() {
   const all = live();
   const list = S.insightRange === 'all' ? all : rangeFilter(all, addDays(today(), -(+S.insightRange - 1)), today());
   const box = $('#insights');
-  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + labCardHTML(all);
+  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + dayFeelCardHTML(all) + labCardHTML(all);
   box.onclick = (ev) => {
     const cd = ev.target.closest('[data-check-day]'); if (cd) { openDayCheck(cd.dataset.checkDay); return; }
     const sh = ev.target.closest('[data-night]');
     if (sh) {
-      $('[data-tip="sleep"]', box).textContent = sh.dataset.night;
-      $$('.sleep-bar', box).forEach((c) => c.classList.toggle('sel', c.dataset.i === sh.dataset.i));
+      const card = sh.closest('.card'); const tip = $('[data-tip]', card); if (tip) tip.textContent = sh.dataset.night;
+      $$('.sleep-bar', card).forEach((c) => c.classList.toggle('sel', c.dataset.i === sh.dataset.i));
       return;
     }
     const hit = ev.target.closest('[data-pt]'); if (!hit) return;

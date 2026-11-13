@@ -1,5 +1,5 @@
 {
-  "version": "1.10.1",
+  "version": "1.11.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -64,6 +64,10 @@
     {
       "date": "2026-11-13",
       "notes": "1.10.1 The log form moves to the current date and time when you reopen the app (if you haven't changed it), and a date or time you pick is always the one saved, including on iPhone when you save straight after picking."
+    },
+    {
+      "date": "2026-11-13",
+      "notes": "1.11.0 How did today feel? One tap a day on the Log tab (calm and easy, mostly fine, bumpy, hard), a screen to rate recent days, and a Sleep and how days felt card in Insights that compares your easiest stretch with the last 14 days."
     }
   ]
 }

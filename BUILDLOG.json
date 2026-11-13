@@ -1,5 +1,5 @@
 {
-  "version": "1.12.0",
+  "version": "1.13.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -72,6 +72,10 @@
     {
       "date": "2026-11-13",
       "notes": "1.12.0 Height & weight area: log height (cm) and weight (kg) with the date, see both over time in Insights with the change since the last measurement, and include them in History, the PDF and the copied report."
+    },
+    {
+      "date": "2026-11-13",
+      "notes": "1.13.0 Today's outlook on the Log tab: when last night's sleep was short, there were night wake-ups, yesterday was rated bumpy or hard, or food hasn't been logged, a short heads-up lists its reasons and a couple of ideas. It can be hidden for the day or turned off in Settings."
     }
   ]
 }

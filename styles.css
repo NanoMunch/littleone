@@ -599,3 +599,11 @@ a.btn { text-decoration: none; }
 .feel-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
 .feel-compare > div { background: var(--warm); border-radius: var(--r-md); padding: 10px; display: flex; flex-direction: column; gap: 3px; font-size: .8rem; }
 .feel-compare b { font-family: var(--serif); font-weight: 400; font-size: .98rem; }
+
+/* today's outlook */
+.outlook { border-color: color-mix(in srgb, var(--gold) 45%, var(--line)); background: color-mix(in srgb, var(--gold-bg) 70%, var(--card)); }
+.outlook.note { border-color: var(--line); background: var(--card); }
+.outlook-list { margin: 0 0 8px; padding-left: 18px; font-size: .9rem; }
+.outlook-list li { margin: 3px 0; }
+.outlook-tip { margin: 0 0 8px; font-size: .9rem; }
+.outlook-foot { margin: 0; }

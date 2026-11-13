@@ -3,7 +3,7 @@ import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standardUnits } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 
-export const APP_VERSION = '1.12.0';
+export const APP_VERSION = '1.13.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -364,6 +364,64 @@ function openFeelCatchup() {
   });
 }
 
+// ---------------------------------------------------------------- today's outlook
+// A plain-rules heads-up at the top of the Log tab. It only uses what has been logged, compares with this
+// child's own recent sleep, and always lists its reasons. It never predicts; it says "may".
+export function outlook(all, nights, ratings, todayStr, nowHour) {
+  const reasons = []; const tips = new Set();
+  const byWake = new Map(nights.map((n) => [n.wakeDate, n]));
+  const base = nights.filter((n) => n.wakeDate < todayStr && n.wakeDate >= addDays(todayStr, -15));
+  const baseAvg = base.length >= 5 ? base.reduce((a, n) => a + n.mins, 0) / base.length : null;
+  const last = byWake.get(todayStr);
+  let strong = false;
+  if (last && baseAvg != null && baseAvg - last.mins >= 45) {
+    reasons.push(`Last night was ${fmtDur(last.mins)}, about ${fmtDur(Math.round((baseAvg - last.mins) / 5) * 5)} less than their usual ${fmtDur(baseAvg)}.`);
+    tips.add('A calmer start, a warning before each switch and a snack a bit earlier can help on short-sleep days. An earlier bedtime tonight may help too.'); strong = true;
+  }
+  if (last && last.wakings >= 2) {
+    reasons.push(`${last.wakings === 2 ? 'Two' : last.wakings} night wake-ups last night${last.awake ? ` (about ${Math.round(last.awake)} min awake)` : ''}.`); strong = true;
+    tips.add('Broken sleep can make transitions harder. Keep the morning simple where you can.');
+  }
+  if (baseAvg != null) {
+    const recent = [1, 2, 3].map((i) => byWake.get(addDays(todayStr, -i))).filter(Boolean);
+    const lowRun = recent.filter((n) => baseAvg - n.mins >= 30).length;
+    if (recent.length >= 2 && lowRun >= 2 && !(last && baseAvg - last.mins >= 45)) { reasons.push(`Sleep has been below their usual on ${lowRun} of the last ${recent.length} nights.`); strong = true; tips.add('An earlier wind-down for a few nights is the simplest thing to try.'); }
+  }
+  const yd = ratings.get(addDays(todayStr, -1));
+  if (yd != null && yd >= 2.5) { reasons.push(`Yesterday was rated ${dayFeelWord(yd)}.`); tips.add('Starting with 10 minutes of one-on-one time before the first request can help the day get going.'); }
+  // Food: only when eating is logged regularly, so no logging doesn't read as no eating.
+  const eat = all.filter((e) => e.cat === 'eating' && e.date >= addDays(todayStr, -14));
+  if (new Set(eat.map((e) => e.date)).size >= 4 && nowHour >= 11) {
+    const t = eat.filter((e) => e.date === todayStr && e.time).map((e) => e.time).sort().pop();
+    const anyToday = eat.some((e) => e.date === todayStr);
+    const lastMin = t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : null;
+    if (!anyToday) { reasons.push('No food logged yet today.'); tips.add('A snack soon could help, and low energy can make requests harder.'); }
+    else if (lastMin != null && nowHour * 60 - lastMin >= 240) { reasons.push(`No food logged since ${fmtTime(t)}.`); tips.add('A snack soon could help, and low energy can make requests harder.'); }
+  }
+  if (!reasons.length) return null;
+  return { level: strong || reasons.length >= 2 ? 'harder' : 'note', reasons, tips: Array.from(tips).slice(0, 2) };
+}
+function renderOutlook() {
+  const box = $('#outlook-card'); if (!box) return;
+  const off = !!(S.outlook && S.outlook.off) || (S.outlook && S.outlook.hideDay === today());
+  if (isHelper() || off) { box.innerHTML = ''; return; }
+  const all = live();
+  const o = outlook(all, sleepNights(all), dayRatings(dayfeelEntries()), today(), new Date().getHours());
+  if (!o) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="card outlook ${o.level}" role="region" aria-label="Today's outlook">
+    <h3 class="card-title">${o.level === 'harder' ? 'Today may be a bit harder' : 'Worth knowing today'}</h3>
+    <ul class="outlook-list">${o.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
+    ${o.tips.length ? `<p class="outlook-tip"><b>Might help:</b> ${o.tips.map(esc).join(' ')}</p>` : ''}
+    <p class="hint outlook-foot">Based only on what's been logged, so it can miss things. It isn't a prediction. <button type="button" class="link-btn" data-act="outlook-hide">Hide for today</button> · <button type="button" class="link-btn" data-act="outlook-off">Turn off</button></p></div>`;
+  box.onclick = async (ev) => {
+    const a = ev.target.closest('[data-act]'); if (!a) return;
+    if (a.dataset.act === 'outlook-hide') S.outlook = { ...(S.outlook || {}), hideDay: today() };
+    else if (a.dataset.act === 'outlook-off') { S.outlook = { ...(S.outlook || {}), off: true }; toast("Turned off. You can turn it back on in Settings."); }
+    else return;
+    await kvSet('outlook', S.outlook); renderOutlook();
+  };
+}
+
 // Pure: compares nights of sleep with how the following days felt.
 export function dayFeelStats(ratings, nights, todayStr) {
   const byWake = new Map(nights.map((n) => [n.wakeDate, n]));
@@ -443,6 +501,7 @@ function showMain(opts = {}) {
   $('#app').dataset.role = isHelper() ? 'helper' : 'parent';
   renderHeader();
   renderDayCard();
+  renderOutlook();
   mountLogForm();
   switchTab(S.tab);
   updateSyncPill();
@@ -471,7 +530,7 @@ function renderTab() {
   else if (S.tab === 'export') renderExport();
   else if (S.tab === 'time') renderTime();
 }
-function renderDependent() { renderHeader(); renderTab(); renderDayCard(); }
+function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderOutlook(); }
 
 // ---------------------------------------------------------------- entry form
 function parentNames(extra) {
@@ -1015,6 +1074,7 @@ function settleClock(el) {
 }
 // Back in the app after a while: an untouched form moves to the current date and time.
 function refreshFormClock() {
+  if (S.tab === 'log' || !S.tab) renderOutlook();
   const el = $('#log-form'); const st = el && el._st;
   if (!st || st.mode !== 'new' || st.timeTouched || st.dateTouched) return;
   const df = $('[data-f="date"]', el);
@@ -2283,6 +2343,10 @@ async function openSettings() {
         <option value="5-13"${S.profile.sleepGuide === '5-13' ? ' selected' : ''}>Ages 5–13: 9–11 hours a night</option>
         <option value="off"${S.profile.sleepGuide === 'off' ? ' selected' : ''}>Don't show a guideline</option>
       </select><p class="hint">From Australia's 24-Hour Movement Guidelines. Shown as a band on the sleep chart. The 3–5 guideline includes naps.</p></div>
+      <div class="field"><label class="label" for="st-outlook">Today's outlook on the Log tab</label><select class="select" id="st-outlook">
+        <option value="on"${S.outlook && S.outlook.off ? '' : ' selected'}>Show it when something stands out</option>
+        <option value="off"${S.outlook && S.outlook.off ? ' selected' : ''}>Don't show it</option>
+      </select><p class="hint">A short heads-up (like a short night's sleep) with its reasons. Only on this phone.</p></div>
       <div class="field"><label class="label" for="st-nrv">Age group for the supplement check</label><select class="select" id="st-nrv">
         ${Object.entries(AGE_GROUPS).map(([k, l]) => `<option value="${k}"${nrvAge() === k ? ' selected' : ''}>${l.charAt(0).toUpperCase() + l.slice(1)}</option>`).join('')}
       </select><p class="hint">Sets which of Australia's upper levels of intake the supplement check uses.</p></div>
@@ -2329,6 +2393,7 @@ async function openSettings() {
     onMount: (b) => {
       b.onchange = async (ev) => {
         if (ev.target.id === 'st-nrv') { S.profile = { ...S.profile, nrvAge: ev.target.value, updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(); toast('Saved'); }
+        if (ev.target.id === 'st-outlook') { S.outlook = { ...(S.outlook || {}), off: ev.target.value === 'off' }; await kvSet('outlook', S.outlook); renderOutlook(); toast('Saved'); }
         if (ev.target.id === 'st-guide') { S.profile = { ...S.profile, sleepGuide: ev.target.value, updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(); toast('Saved'); }
         if (ev.target.id === 'st-child') { await saveProfileBits(undefined, ev.target.value.trim()); renderHeader(); scheduleSync(); toast('Saved'); }
         if (ev.target.id === 'st-name') {
@@ -2848,6 +2913,7 @@ async function init() {
   S.sync = (await kvGet('sync')) || null;
   S.members = (await kvGet('members')) || {};
   S.hiddenItems = (await kvGet('hiddenItems')) || {};
+  S.outlook = (await kvGet('outlook')) || {};
   S.role = (await kvGet('role')) === 'helper' ? 'helper' : 'parent';
   S.fam = (await kvGet('fam')) || null;
   S.famSeen = (await kvGet('famSeen')) || {};

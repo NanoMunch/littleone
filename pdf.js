@@ -298,6 +298,7 @@ export async function buildPdf(data, h) {
     const hl = h.headline(e, data.opts.notes);
     const extra = [];
     if (e.temp && hl.from !== 'temp') extra.push(`Temperature: ${h.fmtTemp(e.temp)}`);
+    if (e.cat === 'growth' && hl.from !== 'growth' && h.growthText(e)) extra.push(h.growthText(e));
     if ((e.med || e.dose) && hl.from !== 'med') extra.push(`${h.ITEM_LABEL[e.cat] || 'Medicine'}: ${[e.med, e.dose].filter(Boolean).join(', ')}`);
     const parts = [];
     font('sans', 'bold', 10.5, C.deep); parts.push({ L: lines(hl.text, w), fam: 'sans', style: 'bold', size: 10.5, color: C.deep, step: lh(10.5, 1.35), gap: 0.6 });

@@ -1,5 +1,5 @@
 {
-  "version": "1.11.0",
+  "version": "1.12.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -68,6 +68,10 @@
     {
       "date": "2026-11-13",
       "notes": "1.11.0 How did today feel? One tap a day on the Log tab (calm and easy, mostly fine, bumpy, hard), a screen to rate recent days, and a Sleep and how days felt card in Insights that compares your easiest stretch with the last 14 days."
+    },
+    {
+      "date": "2026-11-13",
+      "notes": "1.12.0 Height & weight area: log height (cm) and weight (kg) with the date, see both over time in Insights with the change since the last measurement, and include them in History, the PDF and the copied report."
     }
   ]
 }

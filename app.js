@@ -3,7 +3,7 @@ import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standardUnits } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 
-export const APP_VERSION = '1.11.0';
+export const APP_VERSION = '1.12.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -15,6 +15,7 @@ export const CATS = [
   { k: 'medication', label: 'Medicine', em: '💊', ph: 'e.g. For a fever' },
   { k: 'supplement', label: 'Supplement', em: '🫙', ph: 'e.g. With breakfast' },
   { k: 'bloodtest', label: 'Blood test', em: '🧪', ph: 'e.g. Iron studies ordered by the GP' },
+  { k: 'growth', label: 'Height & weight', em: '📏', ph: 'e.g. Measured at the GP or at home' },
   { k: 'appointment', label: 'Appointment', em: '🩺', ph: 'e.g. GP check-up' },
   { k: 'social', label: 'Social', em: '🤝', ph: 'e.g. Played well with a new friend' },
   { k: 'development', label: 'Development', em: '🌱', ph: 'e.g. Wrote their name for the first time' },
@@ -37,9 +38,9 @@ export const TODS = [
 ];
 const TOD_RANK = { Overnight: 0, Morning: 1, Midday: 2, Afternoon: 3, Evening: 4, Night: 5 };
 export const SEV = { 1: 'Mild', 2: 'Moderate', 3: 'High' };
-const EXTRA_FIELDS = { sleep: ['time'], health: ['temp', 'time'], medication: ['med', 'dose', 'time'], supplement: ['med', 'dose', 'time'], appointment: ['time'], bloodtest: [] };
+const EXTRA_FIELDS = { sleep: ['time'], health: ['temp', 'time'], medication: ['med', 'dose', 'time'], supplement: ['med', 'dose', 'time'], appointment: ['time'], bloodtest: [], growth: ['height', 'weight'] };
 // Areas where a concern level doesn't apply (shown without one, and left out of concern counts).
-export const NO_CONCERN = new Set(['win', 'supplement', 'bloodtest']);
+export const NO_CONCERN = new Set(['win', 'supplement', 'bloodtest', 'growth']);
 export const noConcern = (e) => NO_CONCERN.has(e.cat) || !e.sev;
 export const ITEM_LABEL = { medication: 'Medicine', supplement: 'Supplement' };
 const ITEM_PLURAL = { medication: 'medicines', supplement: 'supplements' };
@@ -243,6 +244,7 @@ export function headline(e, allowNotes = true) {
   const med = String(e.med || '').trim();
   if (med) return { text: [med, String(e.dose || '').trim()].filter(Boolean).join(', '), from: 'med' };
   if (String(e.temp || '').trim()) return { text: `Temperature ${fmtTemp(e.temp)}`, from: 'temp' };
+  if (e.cat === 'growth' && (String(e.height || '').trim() || String(e.weight || '').trim())) return { text: growthText(e), from: 'growth' };
   const n = String(e.notes || '').trim();
   if (n && allowNotes) {
     const first = n.split('\n')[0].trim();
@@ -272,6 +274,41 @@ const S = {
   care: [], careRun: null, timeRange: '7',
 };
 const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel');
+
+// ---------------------------------------------------------------- height and weight
+// Height in centimetres and weight in kilograms, as typed ("104.5", "104,5", "17.2 kg"). Returns NaN when
+// it isn't a believable measurement for a child.
+export function growthNum(v, kind) {
+  const m = String(v ?? '').replace(',', '.').match(/\d+(\.\d+)?/); const n = m ? parseFloat(m[0]) : NaN;
+  const [lo, hi] = kind === 'height' ? [30, 200] : [2, 120];
+  return isFinite(n) && n >= lo && n <= hi ? n : NaN;
+}
+const trimNum = (n) => String(Math.round(n * 100) / 100);
+export function growthText(e) {
+  const h = growthNum(e.height, 'height'); const w = growthNum(e.weight, 'weight');
+  return [isFinite(h) ? `Height ${trimNum(h)} cm` : '', isFinite(w) ? `Weight ${trimNum(w)} kg` : ''].filter(Boolean).join(', ');
+}
+// Series shaped like the blood test ones so the same line chart can draw them.
+export function growthSeries(list) {
+  const mk = (kind, name, unit) => {
+    const pts = list.filter((e) => e.cat === 'growth' && isFinite(growthNum(e[kind], kind))).map((e) => {
+      const num = growthNum(e[kind], kind);
+      return { date: e.date, value: trimNum(num), num, unit, low: '', high: '', flag: '', created: e.createdAt || 0 };
+    }).sort((a, b) => (a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.created - b.created));
+    return pts.length ? { name, unit, points: pts, latest: pts[pts.length - 1] } : null;
+  };
+  return [mk('height', 'Height', 'cm'), mk('weight', 'Weight', 'kg')].filter(Boolean);
+}
+// Plain-language change between the last two measurements, and a yearly rate when they are 3+ months apart.
+export function growthChange(s) {
+  if (s.points.length < 2) return '';
+  const a = s.points[s.points.length - 2]; const b = s.latest;
+  const d = Math.round((b.num - a.num) * 100) / 100;
+  const days = Math.round((parseYmd(b.date) - parseYmd(a.date)) / 86400000);
+  let t = d === 0 ? `Same as on ${fmtDateFull(a.date)}` : `${d > 0 ? 'Up' : 'Down'} ${trimNum(Math.abs(d))} ${s.unit} from ${a.value} ${s.unit} on ${fmtDateFull(a.date)}`;
+  if (days >= 90) { const yr = (d / days) * 365; t += ` (about ${trimNum(Math.abs(yr))} ${s.unit} a year ${yr < 0 ? 'down' : 'up'})`; }
+  return t;
+}
 
 // ---------------------------------------------------------------- how the day felt
 // One tap a day. Ratings are stored as small synced entries (cat 'dayfeel') that stay out of History, counts,
@@ -497,6 +534,7 @@ function renderExtra(el) {
   const inp = (f, label, attrs = '') => `<div class="field"><label class="label" for="${uid}-x-${f}">${label}</label><input class="input" id="${uid}-x-${f}" data-x="${f}" value="${esc(x[f] || '')}" autocomplete="off" ${attrs}></div>`;
   let html = '';
   if (st.cat === 'health') html = `<div class="row2">${inp('temp', 'Temperature (°C)', 'inputmode="decimal" placeholder="e.g. 38.2"')}</div>`;
+  else if (st.cat === 'growth') html = `<div class="row2">${inp('height', 'Height (cm)', 'inputmode="decimal" placeholder="e.g. 104.5"')}${inp('weight', 'Weight (kg)', 'inputmode="decimal" placeholder="e.g. 17.2"')}</div><p class="hint">Either one is fine. Measuring without shoes, in light clothes, at about the same time of day keeps results comparable.</p>`;
   else if (ITEM_LABEL[st.cat] && st.mode === 'new' && st.batch.length >= 2) html = `${savedHTML(st)}${batchHTML(st, uid)}`;
   else if (st.cat === 'medication') html = `${savedHTML(st)}${inp('med', 'Medicine', 'placeholder="e.g. Paracetamol"')}${inp('dose', 'Dose', 'placeholder="e.g. 7.5 mL"')}${contentsHTML(st, uid)}`;
   else if (st.cat === 'supplement' && st.product && PRODUCTS[st.product]) html = productFormHTML(st, uid, inp);
@@ -786,7 +824,7 @@ function mountForm(el, entry, mode) {
     cat: e.cat || '', src,
     srcName: src === 'parent' ? (e.srcName || (mode === 'edit' ? e.by : '') || S.myName || 'Me') : src === 'family' ? (e.srcName || (isHelper() ? S.myName || 'Me' : '')) : '',
     sev: e.sev || 0,
-    extra: { temp: e.temp || '', med: e.med || '', dose: e.dose || '', time: e.time || (mode === 'new' && !('time' in e) ? nowHHMM() : ''), awake: e.awake || '' },
+    extra: { temp: e.temp || '', height: e.height || '', weight: e.weight || '', med: e.med || '', dose: e.dose || '', time: e.time || (mode === 'new' && !('time' in e) ? nowHHMM() : ''), awake: e.awake || '' },
     timeTouched: mode === 'edit' || !!e.timeTouched, dateTouched: mode === 'edit' || !!e.dateTouched, mountDate: '', autoTime: '',
     results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name || '', value: r.value || '', unit: r.unit || '', low: r.low || '', high: r.high || '' })) : [],
     contents: Array.isArray(e.contents) ? e.contents.map((c) => ({ name: c.name || '', amount: c.amount || '' })) : [],
@@ -1019,7 +1057,13 @@ async function saveForm(el) {
   }
   const sk = sleepKindOn(st);
   if (sk && !hasDetail('time')) { toast(st.sleepKind === 'bed' ? 'Add the time they went to sleep' : 'Add the time they woke up'); const tf = $('[data-x="time"]', el); if (tf) tf.focus(); return; }
-  if (!title && !notes && !hasDetail('med') && !hasDetail('temp') && !results.length && !sk) { toast('Add a short description or a note'); $('[data-f="title"]', el).focus(); return; }
+  if (st.cat === 'growth') {
+    const h = String(st.extra.height || '').trim(); const w = String(st.extra.weight || '').trim();
+    if (!h && !w) { toast('Add a height or a weight'); const f = $('[data-x="height"]', el); if (f) f.focus(); return; }
+    if (h && !isFinite(growthNum(h, 'height'))) { toast('Height should be in centimetres, between 30 and 200'); $('[data-x="height"]', el).focus(); return; }
+    if (w && !isFinite(growthNum(w, 'weight'))) { toast('Weight should be in kilograms, between 2 and 120'); $('[data-x="weight"]', el).focus(); return; }
+  }
+  if (!title && !notes && !hasDetail('med') && !hasDetail('temp') && !hasDetail('height') && !hasDetail('weight') && !results.length && !sk) { toast('Add a short description or a note'); $('[data-f="title"]', el).focus(); return; }
   if (!date) { toast('Choose a date'); return; }
   if (date > today()) { toast("The date can't be in the future"); return; }
   const now = Date.now();
@@ -1031,7 +1075,7 @@ async function saveForm(el) {
   });
   const keep = [...(EXTRA_FIELDS[st.cat] || []), 'time'];
   if (sk && st.sleepKind === 'waking') keep.push('awake');
-  for (const f of ['temp', 'med', 'dose', 'time', 'awake']) {
+  for (const f of ['temp', 'height', 'weight', 'med', 'dose', 'time', 'awake']) {
     const v = String(st.extra[f] || '').trim();
     if (keep.includes(f) && v) e[f] = v.slice(0, 60); else delete e[f];
   }
@@ -1130,7 +1174,7 @@ function repeatEntry(e) {
   const draft = {
     date: today(), tod: currentTod(), cat: e.cat, title: e.title, notes: '',
     src: k, srcName: k === homeSrc() ? (S.myName || 'Me') : '', sev: e.sev,
-    med: e.med || '', dose: e.dose || '', temp: '', time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+    med: e.med || '', dose: e.dose || '', temp: '', height: '', weight: '', time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
     results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name, unit: r.unit || '', low: r.low || '', high: r.high || '', value: '' })) : [],
     sleep: e.sleep || '', kindTouched: !!e.sleep,
     contents: Array.isArray(e.contents) ? e.contents.map((c) => ({ name: c.name, amount: c.amount || '' })) : [],
@@ -1261,6 +1305,7 @@ function entryCardHTML(e, nightByWake, grp) {
   const extra = [];
   if (hl.from === 'sleep' && String(e.title || '').trim()) extra.push(esc(e.title));
   if (e.temp && hl.from !== 'temp') extra.push(`Temperature ${esc(fmtTemp(e.temp))}`);
+  if (e.cat === 'growth' && hl.from !== 'growth' && growthText(e)) extra.push(esc(growthText(e)));
   if ((e.med || e.dose) && hl.from !== 'med') extra.push(`${esc(e.med || ITEM_LABEL[e.cat] || 'Medicine')}${e.dose ? ', ' + esc(e.dose) : ''}`);
   if (contentsText(e)) {
     const n = e.contents.length; const shown = n > 6 ? contentsText({ contents: e.contents.slice(0, 5) }) + ` and ${n - 5} more` : contentsText(e);
@@ -1610,6 +1655,17 @@ function dayFeelCardHTML(all) {
 }
 const recentStart14 = () => addDays(today(), -13);
 
+function growthCardHTML(all) {
+  const series = growthSeries(all); if (!series.length) return '';
+  const dropped = series.find((s) => s.name === 'Weight' && s.points.length >= 2 && s.latest.num < s.points[s.points.length - 2].num);
+  return `<div class="card"><h3 class="card-title">Height and weight</h3><p class="hint intro">Every measurement logged. Tap a dot to see its value.</p>
+    ${series.map((s, si) => `<div class="lab-trend"><div class="lab-trend-head"><b>${esc(s.name)}</b></div><div class="lab-latest"><span class="lab-big">${esc(s.latest.value)}</span> ${esc(s.unit)}<span class="lab-when">${esc(fmtDateFull(s.latest.date))}</span></div>
+      ${growthChange(s) ? `<div class="lab-change">${esc(growthChange(s))}</div>` : ''}
+      ${labChartSVG(s, 'g' + si)}${s.points.length > 1 ? `<p class="lab-tip" data-tip="g${si}" aria-live="polite"></p>` : ''}</div>`).join('')}
+    ${dropped ? '<div class="lab-note">The latest weight is lower than the one before. Day-to-day weight varies with clothes and time of day, so one reading is not a concern. If weight stays down or stops rising over several measurements, mention it to your GP.</div>' : ''}
+    <p class="hint">Percentile charts (how your child compares with others of the same age) are best read by your GP or child health nurse from your child's health record, because they depend on age, sex and the chart used.</p></div>`;
+}
+
 function labCardHTML(all) {
   const series = labSeries(all); if (!series.length) return '';
   return `<div class="card"><h3 class="card-title">Blood tests</h3><p class="hint intro">Every result logged, newest test first. The shaded band is the normal range from the latest report. Tap a dot to see its value.</p>
@@ -1643,7 +1699,7 @@ function renderInsights() {
   const all = live();
   const list = S.insightRange === 'all' ? all : rangeFilter(all, addDays(today(), -(+S.insightRange - 1)), today());
   const box = $('#insights');
-  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + dayFeelCardHTML(all) + labCardHTML(all);
+  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + dayFeelCardHTML(all) + growthCardHTML(all) + labCardHTML(all);
   box.onclick = (ev) => {
     const cd = ev.target.closest('[data-check-day]'); if (cd) { openDayCheck(cd.dataset.checkDay); return; }
     const sh = ev.target.closest('[data-night]');
@@ -1815,7 +1871,7 @@ async function makePdf(btn) {
   try {
     const { buildPdf } = await import('./pdf.js');
     const data = reportData(); data.badge = concernBadge(data.stats);
-    const { blob, pages } = await buildPdf(data, { CAT, SEV, SRC, srcKey, srcLabel, fmtDayLong, fmtDayShort, fmtTime, fmtTemp, noConcern, ITEM_LABEL, headline, labSeries, labFlag, labRange, labNum, labDomain, FLAG_LABEL, sleepNights, sleepSummary, fmtDur, wokeText, contentsText });
+    const { blob, pages } = await buildPdf(data, { CAT, SEV, SRC, srcKey, srcLabel, fmtDayLong, fmtDayShort, fmtTime, fmtTemp, noConcern, ITEM_LABEL, headline, labSeries, labFlag, labRange, labNum, labDomain, FLAG_LABEL, sleepNights, sleepSummary, fmtDur, wokeText, contentsText, growthText });
     S.lastPdf = { blob, pages, name: `little-one-report-${today()}.pdf` };
     renderPdfReady();
     $('#pdf-ready').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1850,6 +1906,7 @@ function reportText() {
     L.push(hl.text, `  ${meta}`);
     if (hl.from === 'sleep' && String(e.title || '').trim()) L.push(`  ${e.title}`);
     if (e.temp && hl.from !== 'temp') L.push(`  Temperature: ${fmtTemp(e.temp)}`);
+    if (e.cat === 'growth' && hl.from !== 'growth' && growthText(e)) L.push(`  ${growthText(e)}`);
     if ((e.med || e.dose) && hl.from !== 'med') L.push(`  ${ITEM_LABEL[e.cat] || 'Medicine'}: ${[e.med, e.dose].filter(Boolean).join(', ')}`);
     if (contentsText(e)) L.push(`  Contains: ${contentsText(e)}`);
     (Array.isArray(e.results) ? e.results : []).forEach((r) => { const f = labFlag(r); L.push(`  ${r.name}: ${r.value} ${r.unit || ''}${labRange(r) ? ` (normal ${labRange(r)})` : ''}${f === 'low' || f === 'high' ? ` ${FLAG_LABEL[f].toUpperCase()}` : ''}`); });

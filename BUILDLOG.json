@@ -1,5 +1,5 @@
 {
-  "version": "1.13.0",
+  "version": "1.14.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -76,6 +76,10 @@
     {
       "date": "2026-11-13",
       "notes": "1.13.0 Today's outlook on the Log tab: when last night's sleep was short, there were night wake-ups, yesterday was rated bumpy or hard, or food hasn't been logged, a short heads-up lists its reasons and a couple of ideas. It can be hidden for the day or turned off in Settings."
+    },
+    {
+      "date": "2026-11-13",
+      "notes": "1.14.0 Growth percentiles: add your child's sex and birth month and year in Settings to see where height, weight and BMI sit for their age (WHO standards to 2 years, CDC charts from 2 years), with a 3rd to 97th percentile band on the charts and a gentle note when a measurement has moved a lot. Worked out on the phone."
     }
   ]
 }

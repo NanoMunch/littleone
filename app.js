@@ -2,8 +2,9 @@ import { getAllEntries, putEntries, kvGet, kvSet, kvDel } from './db.js';
 import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standardUnits } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
+import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.13.0';
+export const APP_VERSION = '1.14.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -306,7 +307,7 @@ export function growthChange(s) {
   const d = Math.round((b.num - a.num) * 100) / 100;
   const days = Math.round((parseYmd(b.date) - parseYmd(a.date)) / 86400000);
   let t = d === 0 ? `Same as on ${fmtDateFull(a.date)}` : `${d > 0 ? 'Up' : 'Down'} ${trimNum(Math.abs(d))} ${s.unit} from ${a.value} ${s.unit} on ${fmtDateFull(a.date)}`;
-  if (days >= 90) { const yr = (d / days) * 365; t += ` (about ${trimNum(Math.abs(yr))} ${s.unit} a year ${yr < 0 ? 'down' : 'up'})`; }
+  if (days >= 90) { const yr = (d / days) * 365; t += ` (about ${Math.round(Math.abs(yr) * 10) / 10} ${s.unit} a year ${yr < 0 ? 'down' : 'up'})`; }
   return t;
 }
 
@@ -1715,15 +1716,81 @@ function dayFeelCardHTML(all) {
 }
 const recentStart14 = () => addDays(today(), -13);
 
+// Percentile details for one series, when the child's sex and birth month are set.
+function growthPct(kind, p) {
+  const { childSex: sex, childBirth: birth } = S.profile; if (!sex || !birth) return null;
+  return growthPercentile(sex, birth, p.date, kind, p.num);
+}
+function growthChartRefSVG(s, kind, si) {
+  const { childSex: sex, childBirth: birth } = S.profile; if (!sex || !birth) return '';
+  const pts = s.points; if (pts.length < 2) return '';
+  const t0 = parseYmd(pts[0].date).getTime(); const t1 = parseYmd(pts[pts.length - 1].date).getTime(); if (t1 === t0) return '';
+  const N = 14; const refs = [];
+  for (let i = 0; i <= N; i++) {
+    const t = t0 + ((t1 - t0) * i) / N; const d = ymd(new Date(t)); const age = ageMonths(birth, d);
+    const v = age == null ? null : [3, 50, 97].map((q) => valueAtPercentile(sex, age, kind, q));
+    if (!v || v.some((x) => x == null)) return '';
+    refs.push({ t, p3: v[0], p50: v[1], p97: v[2] });
+  }
+  const W = 320; const H = 150; const L = 6; const R = 38; const T = 16; const B = 24;
+  const lo = Math.min(...pts.map((p) => p.num), ...refs.map((r) => r.p3)); const hi = Math.max(...pts.map((p) => p.num), ...refs.map((r) => r.p97));
+  const pad = (hi - lo) * 0.06; const vmin = lo - pad; const vmax = hi + pad;
+  const x = (t) => L + ((t - t0) / (t1 - t0)) * (W - L - R); const y = (v) => T + (1 - (v - vmin) / (vmax - vmin)) * (H - T - B); const f1 = (n) => n.toFixed(1);
+  const short = (d) => parseYmd(d).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: '2-digit' });
+  let svg = `<svg class="lab-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(s.name)} over time with the 3rd to 97th percentile range">`;
+  const band = refs.map((r, i) => `${i ? 'L' : 'M'}${f1(x(r.t))},${f1(y(r.p97))}`).join(' ') + ' ' + refs.slice().reverse().map((r) => `L${f1(x(r.t))},${f1(y(r.p3))}`).join(' ') + ' Z';
+  svg += `<path class="lab-band" d="${band}"></path>`;
+  svg += `<path class="ref-median" d="${refs.map((r, i) => `${i ? 'L' : 'M'}${f1(x(r.t))},${f1(y(r.p50))}`).join(' ')}"></path>`;
+  svg += `<line class="lab-base" x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}"></line>`;
+  svg += `<path class="lab-line" d="${pts.map((p, i) => `${i ? 'L' : 'M'}${f1(x(parseYmd(p.date).getTime()))},${f1(y(p.num))}`).join(' ')}"></path>`;
+  pts.forEach((p, i) => {
+    const q = growthPct(kind, p); const label = `${p.value} ${s.unit} on ${fmtDateFull(p.date)}${q ? `, ${pctText(q.pct)}` : ''}`;
+    const cx = f1(x(parseYmd(p.date).getTime())); const cy = f1(y(p.num));
+    svg += `<circle class="lab-pt" data-series="${si}" data-i="${i}" cx="${cx}" cy="${cy}" r="4.5"><title>${esc(label)}</title></circle><circle class="lab-hit" data-pt="${esc(label)}" data-series="${si}" data-i="${i}" cx="${cx}" cy="${cy}" r="16"></circle>`;
+  });
+  svg += `<text class="lab-axis" x="${L}" y="${H - 7}">${esc(short(pts[0].date))}</text><text class="lab-axis" x="${W - R}" y="${H - 7}" text-anchor="end">${esc(short(pts[pts.length - 1].date))}</text>`;
+  svg += `<text class="lab-axis" x="${W - R + 5}" y="${f1(y(refs[N].p97) + 3.5)}">97th</text><text class="lab-axis" x="${W - R + 5}" y="${f1(y(refs[N].p50) + 3.5)}">50th</text><text class="lab-axis" x="${W - R + 5}" y="${f1(y(refs[N].p3) + 3.5)}">3rd</text>`;
+  return svg + '</svg>';
+}
+function growthPctLines(s, kind) {
+  const last = s.latest; const q = growthPct(kind, last); if (!q) return '';
+  const chart = q.chart === 'WHO' ? 'WHO growth standards' : 'CDC growth chart';
+  let t = `${esc(s.name)} ${esc(last.value)} ${esc(s.unit)} is ${esc(pctText(q.pct))} for a ${esc(S.profile.childSex)} aged ${esc(ageText(q.age))} (${chart}).`;
+  let shift = '';
+  if (s.points.length >= 2) {
+    const prev = s.points[s.points.length - 2]; const pq = growthPct(kind, prev);
+    if (pq) {
+      t += ` On ${esc(fmtDateFull(prev.date))} it was ${esc(pctText(pq.pct))}.`;
+      if (Math.abs(q.z - pq.z) >= 1.3) shift = ` It has moved quite a bit compared with children of the same age (${q.z > pq.z ? 'up' : 'down'} from ${esc(pctText(pq.pct))}). Worth mentioning at the next check-up, along with anything else you've noticed.`;
+    }
+  }
+  return `<div class="lab-note">${t}${shift}</div>`;
+}
 function growthCardHTML(all) {
   const series = growthSeries(all); if (!series.length) return '';
+  const hasRef = !!(S.profile.childSex && S.profile.childBirth);
   const dropped = series.find((s) => s.name === 'Weight' && s.points.length >= 2 && s.latest.num < s.points[s.points.length - 2].num);
-  return `<div class="card"><h3 class="card-title">Height and weight</h3><p class="hint intro">Every measurement logged. Tap a dot to see its value.</p>
-    ${series.map((s, si) => `<div class="lab-trend"><div class="lab-trend-head"><b>${esc(s.name)}</b></div><div class="lab-latest"><span class="lab-big">${esc(s.latest.value)}</span> ${esc(s.unit)}<span class="lab-when">${esc(fmtDateFull(s.latest.date))}</span></div>
+  // BMI from entries that have both a height and a weight (needs age 2 or over)
+  let bmiHTML = '';
+  if (hasRef) {
+    const both = all.filter((e) => e.cat === 'growth' && isFinite(growthNum(e.height, 'height')) && isFinite(growthNum(e.weight, 'weight'))).sort((a, b) => (a.date < b.date ? -1 : 1));
+    const e = both[both.length - 1];
+    if (e) {
+      const bmi = growthNum(e.weight, 'weight') / Math.pow(growthNum(e.height, 'height') / 100, 2);
+      const q = growthPercentile(S.profile.childSex, S.profile.childBirth, e.date, 'bmi', bmi);
+      if (q) bmiHTML = `<div class="lab-note">BMI on ${esc(fmtDateFull(e.date))}: ${esc(trimNum(bmi))}, ${esc(pctText(q.pct))} for a ${esc(S.profile.childSex)} aged ${esc(ageText(q.age))} (CDC growth chart).</div>`;
+    }
+  }
+  const kinds = { Height: 'height', Weight: 'weight' };
+  return `<div class="card"><h3 class="card-title">Height and weight</h3><p class="hint intro">Every measurement logged. Tap a dot to see its value${hasRef ? '. The shaded band is the 3rd to 97th percentile for their age and sex, and the dashed line is the 50th' : ''}.</p>
+    ${series.map((s, si) => { const kind = kinds[s.name]; return `<div class="lab-trend"><div class="lab-trend-head"><b>${esc(s.name)}</b></div><div class="lab-latest"><span class="lab-big">${esc(s.latest.value)}</span> ${esc(s.unit)}<span class="lab-when">${esc(fmtDateFull(s.latest.date))}</span></div>
       ${growthChange(s) ? `<div class="lab-change">${esc(growthChange(s))}</div>` : ''}
-      ${labChartSVG(s, 'g' + si)}${s.points.length > 1 ? `<p class="lab-tip" data-tip="g${si}" aria-live="polite"></p>` : ''}</div>`).join('')}
+      ${(hasRef && growthChartRefSVG(s, kind, 'g' + si)) || labChartSVG(s, 'g' + si)}${s.points.length > 1 ? `<p class="lab-tip" data-tip="g${si}" aria-live="polite"></p>` : ''}
+      ${hasRef ? growthPctLines(s, kind) : ''}</div>`; }).join('')}
+    ${bmiHTML}
+    ${hasRef ? '' : '<p class="hint">Add your child\'s sex and birth month and year in Settings to see percentiles: where each measurement sits among children of the same age and sex. It is worked out on this phone and nothing extra is sent anywhere.</p>'}
     ${dropped ? '<div class="lab-note">The latest weight is lower than the one before. Day-to-day weight varies with clothes and time of day, so one reading is not a concern. If weight stays down or stops rising over several measurements, mention it to your GP.</div>' : ''}
-    <p class="hint">Percentile charts (how your child compares with others of the same age) are best read by your GP or child health nurse from your child's health record, because they depend on age, sex and the chart used.</p></div>`;
+    <p class="hint">${hasRef ? "Percentiles compare with a reference group of children, and healthy children vary widely. A steady pattern over time matters more than any one number, and your GP or child health nurse can read it alongside your child's health record. They use the WHO growth standards to 2 years and the CDC charts from 2 years, which is the usual approach in Australia." : "Percentile charts are best read by your GP or child health nurse alongside your child's health record."}</p></div>`;
 }
 
 function labCardHTML(all) {
@@ -2130,6 +2197,8 @@ async function mergeRemote(payloads) {
       if (fam) S.profile.family = fam;
       if (['3-5', '5-13', 'off'].includes(p.profile.sleepGuide)) S.profile.sleepGuide = p.profile.sleepGuide;
       if (AGE_GROUPS[p.profile.nrvAge]) S.profile.nrvAge = p.profile.nrvAge;
+      if (p.profile.childSex === 'girl' || p.profile.childSex === 'boy') S.profile.childSex = p.profile.childSex;
+      if (/^\d{4}-(0[1-9]|1[0-2])$/.test(p.profile.childBirth || '')) S.profile.childBirth = p.profile.childBirth;
       await kvSet('profile', S.profile); changed++;
     }
     if (p.profile && p.profile.family) {
@@ -2338,6 +2407,12 @@ async function openSettings() {
     <div class="set-section">
       <h3>Your child</h3>
       <div class="field"><label class="label" for="st-child">Name or initials</label><input class="input" id="st-child" maxlength="40" autocomplete="off" value="${esc(S.profile.childName)}"><p class="hint">Shared with your partner's phone.</p></div>
+      <div class="field"><label class="label" for="st-sex">Sex, for growth percentiles</label><select class="select" id="st-sex">
+        <option value=""${S.profile.childSex ? '' : ' selected'}>Not set</option>
+        <option value="girl"${S.profile.childSex === 'girl' ? ' selected' : ''}>Girl</option>
+        <option value="boy"${S.profile.childSex === 'boy' ? ' selected' : ''}>Boy</option>
+      </select></div>
+      <div class="field"><label class="label" for="st-birth">Birth month and year</label><input class="input" id="st-birth" type="month" max="${today().slice(0, 7)}" value="${esc(S.profile.childBirth || '')}"><p class="hint">Only used on this phone to work out growth percentiles (the day of birth isn't needed). Both are shared, locked, with your partner's phone.</p></div>
       <div class="field"><label class="label" for="st-guide">Sleep guideline</label><select class="select" id="st-guide">
         <option value="3-5"${(S.profile.sleepGuide || '3-5') === '3-5' ? ' selected' : ''}>Ages 3–5: 10–13 hours a day</option>
         <option value="5-13"${S.profile.sleepGuide === '5-13' ? ' selected' : ''}>Ages 5–13: 9–11 hours a night</option>
@@ -2394,6 +2469,12 @@ async function openSettings() {
       b.onchange = async (ev) => {
         if (ev.target.id === 'st-nrv') { S.profile = { ...S.profile, nrvAge: ev.target.value, updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(); toast('Saved'); }
         if (ev.target.id === 'st-outlook') { S.outlook = { ...(S.outlook || {}), off: ev.target.value === 'off' }; await kvSet('outlook', S.outlook); renderOutlook(); toast('Saved'); }
+        if (ev.target.id === 'st-sex' || ev.target.id === 'st-birth') {
+          const next = { ...S.profile, updatedAt: Date.now() };
+          if (ev.target.id === 'st-sex') { if (ev.target.value) next.childSex = ev.target.value; else delete next.childSex; }
+          else if (/^\d{4}-(0[1-9]|1[0-2])$/.test(ev.target.value)) next.childBirth = ev.target.value; else delete next.childBirth;
+          S.profile = next; await kvSet('profile', S.profile); scheduleSync(); toast('Saved');
+        }
         if (ev.target.id === 'st-guide') { S.profile = { ...S.profile, sleepGuide: ev.target.value, updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(); toast('Saved'); }
         if (ev.target.id === 'st-child') { await saveProfileBits(undefined, ev.target.value.trim()); renderHeader(); scheduleSync(); toast('Saved'); }
         if (ev.target.id === 'st-name') {

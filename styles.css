@@ -607,3 +607,5 @@ a.btn { text-decoration: none; }
 .outlook-list li { margin: 3px 0; }
 .outlook-tip { margin: 0 0 8px; font-size: .9rem; }
 .outlook-foot { margin: 0; }
+
+.ref-median { fill: none; stroke: var(--sage); stroke-width: 1.3; stroke-dasharray: 4 3; }

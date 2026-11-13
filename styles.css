@@ -627,3 +627,5 @@ a.btn { text-decoration: none; }
 .act-head { display: flex; justify-content: space-between; gap: 8px; font-size: .9rem; margin-bottom: 4px; }
 .act-num { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .act-prog .bar { display: block; }
+.bar .fill.over { background: var(--lavender); }
+.scr-note { margin-top: 10px; }

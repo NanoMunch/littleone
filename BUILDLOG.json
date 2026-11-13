@@ -1,5 +1,5 @@
 {
-  "version": "1.17.0",
+  "version": "1.18.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -92,6 +92,10 @@
     {
       "date": "2026-11-13",
       "notes": "1.17.0 Outdoors and active play: quick minutes (+10, +30, +60, Other), a timer, or a start and end time, with who did it. Shared with everyone and editable later. Daily targets for your child's age from the Australian 24-hour movement guidelines, a gentle afternoon nudge, and a 14-day chart in Insights. Outdoors and play now count in the calm-days comparison."
+    },
+    {
+      "date": "2026-11-13",
+      "notes": "1.18.0 Screen time: quick minutes, a timer you can pause and resume, or a start and end time, by type (shows, games and apps, learning, video calls). Gentle in-app reminders as the day nears and passes the guideline for your child's age. Video calls aren't counted. 14-day chart and type split in Insights. Shared with everyone."
     }
   ]
 }

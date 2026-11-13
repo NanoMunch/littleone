@@ -28,3 +28,22 @@ export function moveNudge(tg, totals, nowHour) {
   if (nowHour >= 16 && need >= 30) return `About ${Math.round(need / 5) * 5} more minutes of active play would reach today's aim.`;
   return '';
 }
+
+const limitText = (m) => (m === 60 ? '1 hour' : m === 120 ? '2 hours' : `${m} minutes`);
+// Minutes that count toward the limit: everything except video calls.
+export function screenCounted(entries, date) {
+  let t = 0;
+  for (const e of entries) if (e.date === date && e.kind !== 'call') t += Math.max(0, +e.mins || 0);
+  return t;
+}
+// A gentle line about screen time so far, or ''. mins counts toward the limit (include a running timer).
+export function screenNote(tg, mins) {
+  if (!tg || !(mins > 0)) return '';
+  const max = tg.screenMax;
+  if (max === 0) return 'Guidelines suggest no screen time before age 2, apart from video calls with family. A book or some play could be a good swap.';
+  const r = mins / max;
+  if (r >= 2) return `Screen time is well over today's guideline of ${limitText(max)}. A break with something active, or a story, can help reset the day.`;
+  if (r > 1) return `Past today's guideline of ${limitText(max)}. Something screen-free next could help.`;
+  if (r >= 0.75) return `Close to today's guideline of ${limitText(max)}. It might be a good time to plan something screen-free.`;
+  return '';
+}

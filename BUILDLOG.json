@@ -1,5 +1,5 @@
 {
-  "version": "1.21.0",
+  "version": "1.21.1",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -108,6 +108,10 @@
     {
       "date": "2026-11-14",
       "notes": "1.21.0 Medicines: a shared daily plan (name, dose, times, days, or as needed) with one-tap Taken, Late and Missed on the Log tab, dose changes marked on charts, quick notes of effects you notice, and Insights patterns (doses taken, how days looked before and after a change, missed-dose days). Possible effects listed in official Australian consumer information are shown for common children's medicines, with sources. Records and shows patterns only; no advice."
+    },
+    {
+      "date": "2026-11-16",
+      "notes": "1.21.1 Me/Time care time: your partner now appears automatically in 'Who is doing it?' (and when adding or editing time), so you can log what you know they did. The picker is always shown, with an 'Add someone' button for anyone else."
     }
   ]
 }

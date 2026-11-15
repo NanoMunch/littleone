@@ -8,7 +8,7 @@ import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.21.0';
+export const APP_VERSION = '1.21.1';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -3107,8 +3107,16 @@ function cleanCare(list) {
   return out;
 }
 function cleanRun(r) { return r && +r.start > 0 && +r.start <= Date.now() + 60000 ? { start: +r.start, kind: CARE_KIND[r.kind] ? r.kind : 'hands', who: /^[a-f0-9]{8,40}$/.test(r.who || '') ? r.who : '' } : null; }
-const whoName = (id) => { if (!id) return S.myName || 'Me'; const x = cleanPeople(S.profile.people)[id]; return x ? x.name : 'Someone'; };
-const whoOptions = () => [['', S.myName || 'Me'], ...peopleList(false).map(([id, x]) => [id, x.name])];
+// People who share this log (your partner, from the connected phones) are offered automatically, with an id worked out from their name
+// so both phones agree on it. Anyone else comes from the People list in Settings.
+const nameId = (n) => { const h = (str) => { let v = 2166136261; for (let i = 0; i < str.length; i++) { v ^= str.charCodeAt(i); v = Math.imul(v, 16777619) >>> 0; } return v.toString(16).padStart(8, '0'); }; const k = String(n).trim().toLowerCase(); return h(k) + h([...k].reverse().join('')); };
+const memberPeople = () => {
+  const out = {}; const mine = String(S.myName || '').trim().toLowerCase(); const listed = new Set(peopleList(false).map(([, x]) => x.name.toLowerCase()));
+  Object.values(S.members || {}).forEach((m) => { const n = String((m && m.name) || '').trim(); const k = n.toLowerCase(); if (n && k !== mine && !listed.has(k)) out[nameId(n)] = n; });
+  return out;
+};
+const whoName = (id) => { if (!id) return S.myName || 'Me'; const x = cleanPeople(S.profile.people)[id]; if (x) return x.name; return memberPeople()[id] || 'Someone'; };
+const whoOptions = () => [['', S.myName || 'Me'], ...Object.entries(memberPeople()), ...peopleList(false).filter(([, x]) => x.name.toLowerCase() !== String(S.myName || '').trim().toLowerCase()).map(([id, x]) => [id, x.name])];
 const whoChips = (cur, attr) => whoOptions().map(([id, n]) => `<button type="button" class="chip" ${attr}="${esc(id)}" aria-pressed="${(cur || '') === id}">${esc(n)}</button>`).join('');
 export function careByPerson(list) {
   const m = new Map();
@@ -3133,7 +3141,7 @@ const toMs = (date, hhmm) => { const [y, m, d] = date.split('-').map(Number); co
 const clock = (ms) => { const t = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(t / 3600)}:${pad(Math.floor(t / 60) % 60)}:${pad(t % 60)}`; };
 
 function personStatsHTML(list) {
-  const m = careByPerson(list); if (m.size < 2 && !peopleList(false).length) return '';
+  const m = careByPerson(list); if (m.size < 2 && whoOptions().length < 2) return '';
   if (!list.length) return '';
   const rows = Array.from(m.entries()).sort((a, b) => b[1].total - a[1].total);
   const all = rows.reduce((t, [, x]) => t + x.total, 0) || 1;
@@ -3164,10 +3172,10 @@ function renderCareTime(box) {
         <div class="field"><label class="label" for="cr-note">Note (optional)</label><input class="input" id="cr-note" maxlength="200" autocomplete="off" placeholder="e.g. Settled after a story"></div>
         <div class="btn-row"><button type="button" class="btn ghost" data-act="care-cancel">Discard</button><button type="button" class="btn primary" data-act="care-stop">Stop and save</button></div></div>`
     : `<div class="card timer-card"><span class="label">What are you doing?</span><div class="chips" role="group">${kindChips(S.careKind || 'hands')}</div>
-        ${whoOptions().length > 1 ? `<span class="label mt10">Who is doing it?</span><div class="chips" role="group" data-whos>${whoChips(S.careWho, 'data-cwho')}</div>` : ''}
+        <span class="label mt10">Who is doing it?</span><div class="chips" role="group" data-whos>${whoChips(S.careWho, 'data-cwho')}<button type="button" class="chip" data-cwho-add="1">+ Add someone</button></div>
         <button type="button" class="btn primary block" data-act="care-start">Start timing</button></div>`;
   const days = Array.from(byDay.entries()).map(([d, rs]) => `<div class="time-day"><h3>${d === today() ? 'Today' : d === addDays(today(), -1) ? 'Yesterday' : esc(fmtDayLong(d))}</h3><span>${careDur(rs.reduce((s, r) => s + careMins(r), 0))}</span></div>`
-    + rs.map((r) => `<button type="button" class="time-row" data-care="${esc(r.id)}"><span><b>${CARE_KIND[r.kind].em} ${CARE_KIND[r.kind].label}${peopleList(false).length || r.who ? ` · ${esc(whoName(r.who))}` : ''}</b><small>${esc(fmtTime(msHHMM(r.start)))} to ${esc(fmtTime(msHHMM(r.end)))}${msDate(r.end) !== d ? ' (next day)' : ''}${r.note ? ` · ${esc(r.note)}` : ''}</small></span><span class="dur">${careDur(careMins(r))}</span></button>`).join('')).join('');
+    + rs.map((r) => `<button type="button" class="time-row" data-care="${esc(r.id)}"><span><b>${CARE_KIND[r.kind].em} ${CARE_KIND[r.kind].label}${whoOptions().length > 1 || r.who ? ` · ${esc(whoName(r.who))}` : ''}</b><small>${esc(fmtTime(msHHMM(r.start)))} to ${esc(fmtTime(msHHMM(r.end)))}${msDate(r.end) !== d ? ' (next day)' : ''}${r.note ? ` · ${esc(r.note)}` : ''}</small></span><span class="dur">${careDur(careMins(r))}</span></button>`).join('')).join('');
   box.innerHTML = `
     <div class="time-private"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Only on this phone. Your partner and family can't see this, and it never syncs. It's included in backup files you make.</span></div>
     ${timer}
@@ -3189,6 +3197,7 @@ function renderCareTime(box) {
     if (b.dataset.ckind) { S.careKind = b.dataset.ckind; renderTime(); }
     else if (b.dataset.trange) { S.timeRange = b.dataset.trange; renderTime(); }
     else if (b.dataset.cwho !== undefined) { S.careWho = b.dataset.cwho; renderTime(); }
+    else if (b.dataset.cwhoAdd) openPersonSheet(null, '', () => renderTime());
     else if (b.dataset.act === 'care-start') { S.careRun = { start: Date.now(), kind: S.careKind || 'hands', who: S.careWho || '' }; await kvSet('careRun', S.careRun); renderTime(); }
     else if (b.dataset.act === 'care-cancel') { S.careRun = null; await kvDel('careRun'); renderTime(); toast('Discarded'); }
     else if (b.dataset.act === 'care-stop') {
@@ -3222,7 +3231,7 @@ function openCareSheet(item) {
     </div>
     <p class="hint">If it ends after midnight, just enter the later time. It will be counted as ending the next day.</p>
     <div class="field"><span class="label">Type</span><div class="chips" data-kinds>${CARE_KINDS.map(([k, em, l]) => `<button type="button" class="chip solid" data-ckind="${k}" aria-pressed="${kind === k}"><span aria-hidden="true">${em}</span>${l}</button>`).join('')}</div></div>
-    ${whoOptions().length > 1 ? `<div class="field"><span class="label">Who</span><div class="chips" data-whos>${whoChips(who, 'data-cwho')}</div></div>` : ''}
+    <div class="field"><span class="label">Who</span><div class="chips" data-whos>${whoChips(who, 'data-cwho')}</div><p class="hint">Not here? Add people under Settings, People who help.</p></div>
     <div class="field"><label class="label" for="ct-note">Note (optional)</label><input class="input" id="ct-note" maxlength="200" autocomplete="off" value="${esc(item ? item.note : '')}"></div>
     <div id="ct-msg" hidden></div>
     <button type="button" class="btn primary block" data-act="ct-save">${item ? 'Save changes' : 'Add'}</button>
@@ -3444,7 +3453,7 @@ function peopleSectionHTML() {
     ${list.length ? `<div class="card kv-card">${list.map(([id, x]) => `<div class="kv helper-row"><span><b>${esc(x.name)}</b><small>${esc(PEOPLE_ROLE[x.role].label)}</small></span><span class="mini-links"><button type="button" data-ppl-edit="${esc(id)}">Edit</button></span></div>`).join('')}</div>` : '<p class="hint">No one added yet.</p>'}
     <div class="btn-stack">${suggest.slice(0, 2).map((n) => `<button type="button" class="btn ghost" data-act="ppl-add" data-name="${esc(n)}">Add ${esc(n)}</button>`).join('')}<button type="button" class="btn dark" data-act="ppl-add">Add a person</button></div></div>`;
 }
-function openPersonSheet(id, presetName) {
+function openPersonSheet(id, presetName, onDone) {
   const cur = id ? cleanPeople(S.profile.people)[id] : null; let role = cur ? cur.role : (presetName ? 'parent' : 'carer');
   openSheet(cur ? 'Edit person' : 'Add a person', `
     <div class="field"><label class="label" for="pp-name">Name</label><input class="input" id="pp-name" maxlength="40" autocomplete="off" value="${esc(cur ? cur.name : presetName)}"></div>
@@ -3457,13 +3466,13 @@ function openPersonSheet(id, presetName) {
         const btn = ev.target.closest('button'); if (!btn) return;
         if (btn.dataset.prole) { role = btn.dataset.prole; $$('[data-prole]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === btn))); return; }
         const all = cleanPeople(S.profile.people);
-        if (btn.dataset.act === 'pp-remove' && id) { all[id] = { ...all[id], removed: true, updatedAt: Date.now() }; await savePeople(all); closeSheet(); openSettings(); toast('Removed'); }
+        if (btn.dataset.act === 'pp-remove' && id) { all[id] = { ...all[id], removed: true, updatedAt: Date.now() }; await savePeople(all); closeSheet(); if (onDone) onDone(); else openSettings(); toast('Removed'); }
         else if (btn.dataset.act === 'pp-save') {
           const name = $('#pp-name', b).value.trim().slice(0, 40);
           if (!name) return showMsg($('#pp-msg', b), 'warn', 'Add a name.');
           if (Object.entries(all).some(([k, x]) => k !== id && !x.removed && x.name.toLowerCase() === name.toLowerCase())) return showMsg($('#pp-msg', b), 'warn', 'Someone with that name is already on the list.');
           const pid = id || Sync.randomId(9); all[pid] = { name, role, removed: false, updatedAt: Date.now() };
-          await savePeople(all); closeSheet(); openSettings(); refreshSourceChips($('#log-form')); toast('Saved');
+          await savePeople(all); closeSheet(); if (onDone) onDone(); else openSettings(); refreshSourceChips($('#log-form')); toast('Saved');
         }
       };
     },

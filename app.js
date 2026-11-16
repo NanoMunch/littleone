@@ -3,12 +3,13 @@ import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standardUnits } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 import { WHAT, WHY, REPAIR, CUP, CUP_TAGS, SUPPORT, tipsFor, cupTips, momentSummary, childLink, cupLink } from './me.js';
+import { DETAILS, DETAIL_NUMS, cleanDetail, cleanNum, hasDetail as hasMoment, detailText, detailTitle, momentCards, tallyStats, tallyNotes } from './moments.js';
 import { EFFECTS, DAY_NAMES, retestInfo, reminderIcs, cleanPlans, mergePlans, activeOn, isPrn, doseId, todayRows, adherence, changePoints, beforeAfter, missedLink, effectCounts } from './meds.js';
 import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.23.0';
+export const APP_VERSION = '1.24.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -24,6 +25,10 @@ export const CATS = [
   { k: 'appointment', label: 'Appointment', em: '🩺', ph: 'e.g. GP check-up' },
   { k: 'social', label: 'Social', em: '🤝', ph: 'e.g. Played well with a new friend' },
   { k: 'development', label: 'Development', em: '🌱', ph: 'e.g. Wrote their name for the first time' },
+  { k: 'lesson', label: 'Lessons & sport', em: '🏊', ph: 'e.g. Swimming lesson' },
+  { k: 'school', label: 'Kinder & school', em: '🎒', ph: 'e.g. Day at kinder' },
+  { k: 'selfcare', label: 'Self-care', em: '🪥', ph: 'e.g. Brushed teeth' },
+  { k: 'tantrum', label: 'Tantrum', em: '🌋', ph: 'e.g. At the shops' },
   { k: 'win', label: 'Win', em: '⭐', ph: 'e.g. Used words to say they were upset' },
   { k: 'other', label: 'Other', em: '📝', ph: 'A short description' },
 ];
@@ -45,7 +50,7 @@ const TOD_RANK = { Overnight: 0, Morning: 1, Midday: 2, Afternoon: 3, Evening: 4
 export const SEV = { 1: 'Mild', 2: 'Moderate', 3: 'High' };
 const EXTRA_FIELDS = { sleep: ['time'], health: ['temp', 'time'], medication: ['med', 'dose', 'time'], supplement: ['med', 'dose', 'time'], appointment: ['time'], bloodtest: [], growth: ['height', 'weight'] };
 // Areas where a concern level doesn't apply (shown without one, and left out of concern counts).
-export const NO_CONCERN = new Set(['win', 'supplement', 'bloodtest', 'growth']);
+export const NO_CONCERN = new Set(['win', 'supplement', 'bloodtest', 'growth', 'lesson', 'school', 'selfcare']);
 export const noConcern = (e) => NO_CONCERN.has(e.cat) || !e.sev;
 export const ITEM_LABEL = { medication: 'Medicine', supplement: 'Supplement' };
 const ITEM_PLURAL = { medication: 'medicines', supplement: 'supplements' };
@@ -246,6 +251,7 @@ export function headline(e, allowNotes = true) {
   if (t) return { text: t, from: 'title' };
   const res = Array.isArray(e.results) ? e.results.filter((r) => r && String(r.name || '').trim()).map((r) => String(r.name).trim()) : [];
   if (res.length) return { text: res.length > 3 ? `${res.slice(0, 3).join(', ')} and ${res.length - 3} more` : res.length > 1 ? `${res.slice(0, -1).join(', ')} and ${res[res.length - 1]}` : res[0], from: 'results' };
+  if (DETAILS[e.cat] && !String(e.notes || '').trim() && hasMoment(e.cat, e.dt, e)) return { text: detailTitle(e), from: 'detail' };
   const med = String(e.med || '').trim();
   if (med) return { text: [med, String(e.dose || '').trim()].filter(Boolean).join(', '), from: 'med' };
   if (String(e.temp || '').trim()) return { text: `Temperature ${fmtTemp(e.temp)}`, from: 'temp' };
@@ -280,7 +286,7 @@ const S = {
   track: loadTrack(), fold: {},
 };
 // What this phone shows. Only a display choice on this phone (localStorage), never synced.
-const TRACK_CARDS = [['dayfeel', 'How did today feel?'], ['activity', 'Outdoors and active play'], ['screen', 'Screen time'], ['meds', 'Medicines today'], ['timer', 'Timers']];
+const TRACK_CARDS = [['dayfeel', 'How did today feel?'], ['activity', 'Outdoors and active play'], ['screen', 'Screen time'], ['tally', 'Quick taps'], ['meds', 'Medicines today'], ['timer', 'Timers']];
 function loadTrack() {
   try { const t = JSON.parse(localStorage.getItem('lo-track') || '{}') || {}; const arr = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string').slice(0, 40) : []); return { openCards: !!t.openCards, hide: arr(t.hide), hideCats: arr(t.hideCats), histAll: !!t.histAll }; }
   catch { return { openCards: false, hide: [], hideCats: [], histAll: false }; }
@@ -300,7 +306,7 @@ function setupFolds() {
     const open = body.hidden; S.fold[k] = open; body.hidden = !open; t.setAttribute('aria-expanded', String(open));
   });
 }
-const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'activity' && e.cat !== 'screen' && e.cat !== 'feedback' && e.cat !== 'meddose' && e.cat !== 'sidefx');
+const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'tally' && e.cat !== 'activity' && e.cat !== 'screen' && e.cat !== 'feedback' && e.cat !== 'meddose' && e.cat !== 'sidefx');
 
 // ---------------------------------------------------------------- height and weight
 // Height in centimetres and weight in kilograms, as typed ("104.5", "104,5", "17.2 kg"). Returns NaN when
@@ -484,6 +490,38 @@ export function renderActivityCard() {
   };
 }
 
+
+// ---------------------------------------------------------------- one-tap counters (shared)
+// Whining and "I don't love you": a tap each, kept as small synced entries (cat 'tally') out of History and the PDF.
+const TALLY = { whine: { em: '😩', label: 'Whining' }, notlove: { em: '💔', label: 'Said they don\'t love me' } };
+const tallyEntries = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.cat === 'tally' && e.date && TALLY[e.kind]);
+export function renderTallyCard() {
+  const box = $('#tally-card'); if (!box) return;
+  if (isHelper() || cardHidden('tally')) { box.innerHTML = ''; return; }
+  const st = tallyStats(tallyEntries(), today());
+  const sum = st.whine.today || st.notlove.today ? [st.whine.today ? `${st.whine.today} whining` : '', st.notlove.today ? `${st.notlove.today} tough words` : ''].filter(Boolean).join(' · ') : 'Tap to count';
+  box.innerHTML = foldCard('tally', 'Quick taps', sum, `<div class="act-row tally-row">${Object.entries(TALLY).map(([k, v]) => `<button type="button" class="chip tally-btn" data-tally="${k}"><span aria-hidden="true">${v.em}</span> ${esc(v.label)} <b>${st[k].today || ''}</b></button>`).join('')}</div>
+    <p class="hint">One tap each time it happens. Only counts, with a gentle pattern in Insights. Shared with everyone using this log.</p>`, false, 'act-card');
+  box.onclick = async (ev) => {
+    const b = ev.target.closest('[data-tally]'); if (!b) return; const k = b.dataset.tally; const now = Date.now();
+    const e = { id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, cat: 'tally', kind: k, title: '', notes: '', sev: 0, src: 'parent', srcName: S.myName || 'Me', date: today(), time: nowHHMM(), tod: todOf(nowHHMM()) };
+    await saveActivity(e); renderTallyCard(); if (S.tab === 'insights') renderInsights();
+    toast(`${TALLY[k].label} counted`, { label: 'Undo', fn: async () => { await deleteActivity(e); renderTallyCard(); if (S.tab === 'insights') renderInsights(); } });
+  };
+}
+function tallyInsightHTML() {
+  if (isHelper()) return '';
+  const list = tallyEntries(); if (!list.length) return '';
+  const st = tallyStats(list, today()); const nt = tallyNotes(st);
+  const line = (k) => `<div class="kv"><span>${TALLY[k].em} ${esc(TALLY[k].label)}</span><span>${st[k].week} this week · ${st[k].prev} the week before</span></div>`;
+  return `<div class="card"><h3 class="card-title">Whining and tough words</h3>${line('whine')}${line('notlove')}
+    ${nt.notes.length ? `<p class="hint">${nt.notes.map(esc).join(' ')}</p>` : '<p class="hint">Nothing stands out. Counts alone don\'t say much, so this only speaks up if a pattern builds.</p>'}
+    ${nt.tips.length ? `<p class="outlook-tip"><b>Might help:</b> ${nt.tips.map(esc).join(' ')}</p>` : ''}</div>`;
+}
+function momentsInsightHTML() {
+  if (isHelper()) return '';
+  return momentCards(live(), today()).map((c) => `<div class="card"><h3 class="card-title">${esc(c.title)}</h3><p class="hint">${c.facts.map(esc).join(' ')}</p>${c.tips.length ? `<p class="outlook-tip"><b>Might help:</b> ${c.tips.map(esc).join(' ')}</p>` : ''}</div>`).join('');
+}
 // ---------------------------------------------------------------- one timer card
 // Active play, outdoors and screen time (synced entries) and your own care time (private to this phone) share one card.
 const runElapsed = (r) => r.acc + (r.paused ? 0 : Math.max(0, Date.now() - r.resumedAt));
@@ -874,6 +912,7 @@ function showMain(opts = {}) {
   renderDayCard();
   renderActivityCard();
   renderScreenCard();
+  renderTallyCard();
   renderMedsCard();
   renderOutlook();
   renderTimerCard();
@@ -906,7 +945,7 @@ function renderTab() {
   else if (S.tab === 'export') renderExport();
   else if (S.tab === 'time') renderTime();
 }
-function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderActivityCard(); renderScreenCard(); renderMedsCard(); renderOutlook(); renderTimerCard(); }
+function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderActivityCard(); renderScreenCard(); renderTallyCard(); renderMedsCard(); renderOutlook(); renderTimerCard(); }
 
 // ---------------------------------------------------------------- entry form
 // ---- people (shared): partner, carers, family. Stored in the shared profile so every phone sees the same list.
@@ -986,12 +1025,19 @@ function refreshSourceChips(el) {
   const box = $('[data-srcs]', el); if (box) box.innerHTML = sourceChipsHTML(el._st);
 }
 
+function detailFormHTML(st, inp) {
+  const spec = DETAILS[st.cat]; const cur = st.dt || {};
+  const groups = spec.groups.map((g) => `<div class="field"><span class="label">${esc(g.l)}</span><div class="chips" role="group" aria-label="${esc(g.l)}">${g.opts.map((o, i) => `<button type="button" class="chip" data-dt="${g.f}|${i}" aria-pressed="${cur[g.f] === o}">${esc(o)}</button>`).join('')}</div></div>`).join('');
+  const nums = spec.nums.length ? `<div class="row2">${spec.nums.map((n) => inp(n.f, n.l, `inputmode="decimal" placeholder="${esc(n.ph)}"`)).join('')}</div>` : '';
+  return `${groups}${nums}<p class="hint">All optional. Tap a chip again to clear it. Patterns and gentle ideas appear in Insights.</p>`;
+}
 function renderExtra(el) {
   const st = el._st; const x = st.extra; const box = $('[data-extra]', el);
   const uid = st.mode === 'edit' ? 'ed' : 'lg';
   const inp = (f, label, attrs = '') => `<div class="field"><label class="label" for="${uid}-x-${f}">${label}</label><input class="input" id="${uid}-x-${f}" data-x="${f}" value="${esc(x[f] || '')}" autocomplete="off" ${attrs}></div>`;
   let html = '';
-  if (st.cat === 'health') html = `<div class="row2">${inp('temp', 'Temperature (°C)', 'inputmode="decimal" placeholder="e.g. 38.2"')}</div>`;
+  if (DETAILS[st.cat]) html = detailFormHTML(st, inp);
+  else if (st.cat === 'health') html = `<div class="row2">${inp('temp', 'Temperature (°C)', 'inputmode="decimal" placeholder="e.g. 38.2"')}</div>`;
   else if (st.cat === 'growth') html = `<div class="row2">${inp('height', 'Height (cm)', 'inputmode="decimal" placeholder="e.g. 104.5"')}${inp('weight', 'Weight (kg)', 'inputmode="decimal" placeholder="e.g. 17.2"')}</div><p class="hint">Either one is fine. Measuring without shoes, in light clothes, at about the same time of day keeps results comparable.</p>`;
   else if (ITEM_LABEL[st.cat] && st.mode === 'new' && st.batch.length >= 2) html = `${savedHTML(st)}${batchHTML(st, uid)}`;
   else if (st.cat === 'medication') html = `${savedHTML(st)}${inp('med', 'Medicine', 'placeholder="e.g. Paracetamol"')}${inp('dose', 'Dose', 'placeholder="e.g. 7.5 mL"')}${contentsHTML(st, uid)}`;
@@ -1282,7 +1328,8 @@ function mountForm(el, entry, mode) {
     cat: e.cat || '', src,
     srcName: src === 'parent' ? (e.srcName || (mode === 'edit' ? e.by : '') || S.myName || 'Me') : src === 'family' ? (e.srcName || (isHelper() ? S.myName || 'Me' : '')) : (e.srcName || ''),
     sev: e.sev || 0,
-    extra: { temp: e.temp || '', height: e.height || '', weight: e.weight || '', med: e.med || '', dose: e.dose || '', time: e.time || (mode === 'new' && !('time' in e) ? nowHHMM() : ''), awake: e.awake || '' },
+    extra: { temp: e.temp || '', height: e.height || '', weight: e.weight || '', med: e.med || '', dose: e.dose || '', time: e.time || (mode === 'new' && !('time' in e) ? nowHHMM() : ''), awake: e.awake || '', mins: e.mins || '', hrs: e.hrs || '', melt: e.melt || '' },
+    dt: cleanDetail(e.cat, e.dt),
     timeTouched: mode === 'edit' || !!e.timeTouched, dateTouched: mode === 'edit' || !!e.dateTouched, mountDate: '', autoTime: '',
     results: Array.isArray(e.results) ? e.results.map((r) => ({ name: r.name || '', value: r.value || '', unit: r.unit || '', low: r.low || '', high: r.high || '' })) : [],
     contents: Array.isArray(e.contents) ? e.contents.map((c) => ({ name: c.name || '', amount: c.amount || '' })) : [],
@@ -1301,13 +1348,16 @@ function mountForm(el, entry, mode) {
   el.onclick = async (ev) => {
     const b = ev.target.closest('button'); if (!b || !el.contains(b)) return;
     if (b.dataset.cat) {
-      if (st.cat !== b.dataset.cat) st.batch = []; // a selection belongs to one area
+      if (st.cat !== b.dataset.cat) { st.batch = []; st.dt = {}; } // a selection belongs to one area
       st.cat = b.dataset.cat;
       $$('.cat-btn', el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
       if (st.cat === 'bloodtest' && !st.srcTouched && st.src === homeSrc()) { st.src = 'doctor'; st.srcName = ''; st.srcAuto = true; refreshSourceChips(el); }
       else if (st.cat !== 'bloodtest' && st.srcAuto) { st.src = homeSrc(); st.srcName = S.myName || 'Me'; st.srcAuto = false; refreshSourceChips(el); }
       autoSleepKind(el);
       renderExtra(el); syncFormBits(el); saveDraft(el);
+    } else if (b.dataset.dt) {
+      const [f, i] = b.dataset.dt.split('|'); const g = (DETAILS[st.cat] || { groups: [] }).groups.find((x) => x.f === f); const v = g && g.opts[+i];
+      if (v) { if (st.dt[f] === v) delete st.dt[f]; else st.dt[f] = v; $$(`[data-dt^="${f}|"]`, el).forEach((x) => x.setAttribute('aria-pressed', String(st.dt[f] === g.opts[+x.dataset.dt.split('|')[1]]))); saveDraft(el); }
     } else if (b.hasAttribute('data-kind')) {
       st.sleepKind = b.dataset.kind; st.kindTouched = true;
       if (st.sleepKind && !st.extra.time && st.mode === 'new') st.extra.time = nowHHMM();
@@ -1444,7 +1494,7 @@ function saveDraft(el) {
     const d = {
       date: $('[data-f="date"]', el).value, tod: $('[data-f="tod"]', el).value,
       title: $('[data-f="title"]', el).value, notes: $('[data-f="notes"]', el).value,
-      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, contents: st.contents, product: st.product, units: st.units, batch: st.batch, timeTouched: st.timeTouched, dateTouched: st.dateTouched, sleep: st.sleepKind, kindTouched: st.kindTouched, savedAt: Date.now(),
+      cat: st.cat, src: st.src, srcName: st.srcName, sev: st.sev, ...st.extra, results: st.results, contents: st.contents, product: st.product, units: st.units, batch: st.batch, timeTouched: st.timeTouched, dateTouched: st.dateTouched, sleep: st.sleepKind, kindTouched: st.kindTouched, dt: st.dt, savedAt: Date.now(),
     };
     if (d.title || d.notes || d.cat) kvSet('draft', d).catch(() => {}); else kvDel('draft').catch(() => {});
   }, 400);
@@ -1527,7 +1577,7 @@ async function saveForm(el) {
     if (h && !isFinite(growthNum(h, 'height'))) { toast('Height should be in centimetres, between 30 and 200'); $('[data-x="height"]', el).focus(); return; }
     if (w && !isFinite(growthNum(w, 'weight'))) { toast('Weight should be in kilograms, between 2 and 120'); $('[data-x="weight"]', el).focus(); return; }
   }
-  if (!title && !notes && !hasDetail('med') && !hasDetail('temp') && !hasDetail('height') && !hasDetail('weight') && !results.length && !sk) { toast('Add a short description or a note'); $('[data-f="title"]', el).focus(); return; }
+  if (!title && !notes && !hasDetail('med') && !hasDetail('temp') && !hasDetail('height') && !hasDetail('weight') && !results.length && !sk && !hasMoment(st.cat, st.dt, st.extra)) { toast('Add a short description or a note'); $('[data-f="title"]', el).focus(); return; }
   if (!date) { toast('Choose a date'); return; }
   if (date > today()) { toast("The date can't be in the future"); return; }
   const now = Date.now();
@@ -1543,6 +1593,8 @@ async function saveForm(el) {
     const v = String(st.extra[f] || '').trim();
     if (keep.includes(f) && v) e[f] = v.slice(0, 60); else delete e[f];
   }
+  const dd = cleanDetail(st.cat, st.dt); if (Object.keys(dd).length) e.dt = dd; else delete e.dt;
+  for (const f of DETAIL_NUMS) { const v = DETAILS[st.cat] && DETAILS[st.cat].nums.some((n) => n.f === f) ? cleanNum(st.extra[f]) : ''; if (v) e[f] = v; else delete e[f]; }
   if (results.length) e.results = results; else delete e.results;
   const contents = ITEM_LABEL[st.cat] ? st.contents.map((c) => ({ name: String(c.name || '').trim().slice(0, 40), amount: String(c.amount || '').trim().slice(0, 20) })).filter((c) => c.name) : [];
   if (contents.length) e.contents = contents; else delete e.contents;
@@ -1785,6 +1837,8 @@ function entryCardHTML(e, nightByWake, grp) {
   const night = nightByWake && e.sleep === 'wake' ? nightByWake.get(e.id) : null;
   if (night) extra.push(`Slept ${fmtDur(night.mins)} from ${fmtTime(night.bed)}${night.wakings ? `, ${wokeText(night)}` : ''}`);
   if (e.cat === 'sleep' && e.sleep === 'waking' && e.awake) extra.push(`Awake ${esc(e.awake)} min`);
+  if (DETAILS[e.cat] && detailText(e) && hl.from !== 'detail') extra.push(esc(detailText(e)));
+  else if (hl.from === 'detail' && detailText(e)) extra.push(esc(detailText(e)));
   const tags = [];
   if (!noConcern(e)) tags.push(`<span class="tag">${SEV[e.sev] || 'Mild'} concern</span>`);
   if (grp && !grp.oneSrc) tags.push(srcPill(e));
@@ -2251,7 +2305,7 @@ function renderInsights() {
   const all = live();
   const list = S.insightRange === 'all' ? all : rangeFilter(all, addDays(today(), -(+S.insightRange - 1)), today());
   const box = $('#insights');
-  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + activityInsightHTML() + screenInsightHTML() + medsInsightHTML() + dayFeelCardHTML(all) + growthCardHTML(all) + labCardHTML(all);
+  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + activityInsightHTML() + screenInsightHTML() + momentsInsightHTML() + tallyInsightHTML() + medsInsightHTML() + dayFeelCardHTML(all) + growthCardHTML(all) + labCardHTML(all);
   box.onclick = (ev) => {
     const cd = ev.target.closest('[data-check-day]'); if (cd) { openDayCheck(cd.dataset.checkDay); return; }
     const sh = ev.target.closest('[data-night]');
@@ -2423,7 +2477,7 @@ async function makePdf(btn) {
   try {
     const { buildPdf } = await import('./pdf.js');
     const data = reportData(); data.badge = concernBadge(data.stats);
-    const { blob, pages } = await buildPdf(data, { CAT, SEV, SRC, srcKey, srcLabel, fmtDayLong, fmtDayShort, fmtTime, fmtTemp, noConcern, ITEM_LABEL, headline, labSeries, labFlag, labRange, labNum, labDomain, FLAG_LABEL, sleepNights, sleepSummary, fmtDur, wokeText, contentsText, growthText });
+    const { blob, pages } = await buildPdf(data, { CAT, SEV, SRC, srcKey, srcLabel, fmtDayLong, fmtDayShort, fmtTime, fmtTemp, noConcern, ITEM_LABEL, headline, labSeries, labFlag, labRange, labNum, labDomain, FLAG_LABEL, sleepNights, sleepSummary, fmtDur, wokeText, contentsText, growthText, detailText });
     S.lastPdf = { blob, pages, name: `little-one-report-${today()}.pdf` };
     renderPdfReady();
     $('#pdf-ready').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -2461,6 +2515,7 @@ function reportText() {
     if (e.cat === 'growth' && hl.from !== 'growth' && growthText(e)) L.push(`  ${growthText(e)}`);
     if ((e.med || e.dose) && hl.from !== 'med') L.push(`  ${ITEM_LABEL[e.cat] || 'Medicine'}: ${[e.med, e.dose].filter(Boolean).join(', ')}`);
     if (contentsText(e)) L.push(`  Contains: ${contentsText(e)}`);
+    if (DETAILS[e.cat] && detailText(e)) L.push(`  ${detailText(e)}`);
     (Array.isArray(e.results) ? e.results : []).forEach((r) => { const f = labFlag(r); L.push(`  ${r.name}: ${r.value} ${r.unit || ''}${labRange(r) ? ` (normal ${labRange(r)})` : ''}${f === 'low' || f === 'high' ? ` ${FLAG_LABEL[f].toUpperCase()}` : ''}`); });
     if (d.opts.notes && e.notes && hl.from !== 'notes-all') L.push(`  Notes: ${e.notes.replace(/\n/g, '\n  ')}`);
     L.push('');
@@ -3192,7 +3247,7 @@ function openMomentSheet(item) {
 // ---------------------------------------------------------------- care time (private to this phone)
 // A private record of the time you spend looking after your child. It is stored only on this phone and is never
 // part of the synced log, so your partner and family members can't see it. It is included in backup files you make.
-const CARE_KINDS = [['hands', '🤲', 'Hands-on care'], ['settle', '🌙', 'Settling and night'], ['appt', '🩺', 'Appointments and travel'], ['admin', '📋', 'Admin and research'], ['other', '📝', 'Other']];
+const CARE_KINDS = [['hands', '🤲', 'Hands-on care'], ['settle', '🌙', 'Settling and night'], ['appt', '🩺', 'Appointments and travel'], ['admin', '📋', 'Admin and research'], ['bedtime', '🛁', 'Bath and bedtime routine'], ['meals', '🍽️', 'Meals and prep'], ['play', '🎲', 'Playing together'], ['travel', '🚗', 'Pick-ups and drop-offs'], ['meltdown', '🌋', 'Meltdown support'], ['other', '📝', 'Other']];
 const CARE_KIND = Object.fromEntries(CARE_KINDS.map(([k, em, l]) => [k, { em, label: l }]));
 let careTick = null;
 function cleanCare(list) {
@@ -3245,7 +3300,7 @@ function personStatsHTML(list) {
   if (!list.length) return '';
   const rows = Array.from(m.entries()).sort((a, b) => b[1].total - a[1].total);
   const all = rows.reduce((t, [, x]) => t + x.total, 0) || 1;
-  const short = { hands: 'hands-on', settle: 'settling', appt: 'visits', admin: 'admin', other: 'other' };
+  const short = { hands: 'hands-on', settle: 'settling', appt: 'visits', admin: 'admin', bedtime: 'bedtime', meals: 'meals', play: 'play', travel: 'travel', meltdown: 'meltdowns', other: 'other' };
   return `<h4 class="feel-sub">Who looked after ${esc(S.profile.childName || 'your child')}</h4><div class="bars time-bars">${rows.map(([w, x]) => `<div class="bar"><span>${esc(whoName(w))}</span><div class="track"><div class="fill" data-w="${Math.max(2, Math.round((x.total / rows[0][1].total) * 100))}"></div></div><span class="n time-n">${careDur(x.total)}</span></div>
     <p class="hint person-kinds">${Math.round((x.total / all) * 100)}% of the time · ${x.n} session${x.n === 1 ? '' : 's'}${Object.entries(x.kinds).sort((a, b) => b[1] - a[1]).map(([k, mm]) => ` · ${short[k]} ${careDur(mm)}`).join('')}</p>`).join('')}</div>`;
 }
@@ -3283,7 +3338,7 @@ function renderCareTime(box) {
     <div class="chips mt10" id="time-range">${[['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days']].map(([k, l]) => `<button type="button" class="chip solid" data-trange="${k}" aria-pressed="${S.timeRange === k}">${l}</button>`).join('')}</div>
     <div class="card mt10">
       <div class="time-total"><div class="stat"><b>${total ? careDur(total) : '0'}</b><span>Total</span></div><div class="stat"><b>${total ? careDur(total / n) : '0'}</b><span>A day on average</span></div><div class="stat"><b>${byDay.size}</b><span>Days with time</span></div></div>
-      ${byKind.length ? `<div class="bars time-bars">${byKind.map(([k, m]) => `<div class="bar"><span>${CARE_KIND[k].em} ${({ hands: 'Hands-on', settle: 'Settling', appt: 'Visits', admin: 'Admin', other: 'Other' })[k]}</span><div class="track"><div class="fill" data-w="${Math.max(2, Math.round((m / maxK) * 100))}"></div></div><span class="n time-n">${careDur(m)}</span></div>`).join('')}</div>` : '<p class="hint">Start the timer, or add time you forgot to log. Totals appear here.</p>'}
+      ${byKind.length ? `<div class="bars time-bars">${byKind.map(([k, m]) => `<div class="bar"><span>${CARE_KIND[k].em} ${({ hands: 'Hands-on', settle: 'Settling', appt: 'Visits', admin: 'Admin', bedtime: 'Bedtime', meals: 'Meals', play: 'Play', travel: 'Travel', meltdown: 'Meltdowns', other: 'Other' })[k]}</span><div class="track"><div class="fill" data-w="${Math.max(2, Math.round((m / maxK) * 100))}"></div></div><span class="n time-n">${careDur(m)}</span></div>`).join('')}</div>` : '<p class="hint">Start the timer, or add time you forgot to log. Totals appear here.</p>'}
       ${personStatsHTML(list)}
     </div>
     <button type="button" class="btn dark block" data-act="care-add">Add time I forgot to log</button>

@@ -1,5 +1,5 @@
 {
-  "version": "1.23.0",
+  "version": "1.24.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -120,6 +120,10 @@
     {
       "date": "2026-11-16",
       "notes": "1.23.0 Today's outlook now notices what is carrying on from yesterday (a second short night, a run of bumpier days, sleep easing again) and varies its wording from day to day, in a gentle, no-guilt tone. Medicines can have a check or retest date (for example an iron retest): a countdown, a daily encouragement to keep the dose up, a kind count of days given, and an optional daily reminder file for your calendar."
+    },
+    {
+      "date": "2026-11-16",
+      "notes": "1.24.0 New log areas: Lessons & sport (engagement, confidence, wants to go back), Kinder & school (where, how it went, pick-up mood, pick-up meltdown), Self-care skills, Tantrums (length, what came before, how it settled, afterwards), plus chips on Social. Quick taps for whining and 'said they don't love me'. Insights shows gentle patterns and ideas for each. More timer circumstances (bedtime routine, meals, playing together, pick-ups, meltdown support)."
     }
   ]
 }

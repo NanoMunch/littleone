@@ -664,3 +664,6 @@ a.btn { text-decoration: none; }
 .outlook-more > summary { cursor: pointer; font-weight: 600; font-size: .9rem; padding: 4px 0; }
 .track-list { display: grid; gap: 6px; margin-top: 6px; }
 .track-list .check { display: flex; align-items: center; gap: 8px; min-height: 36px; }
+
+.med-goal { margin: 10px 0 2px; font-size: .9rem; line-height: 1.45; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--accent, #6b4f3a) 8%, transparent); }
+.med-goal small { display: block; color: var(--muted); margin-top: 2px; }

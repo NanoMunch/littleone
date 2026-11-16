@@ -19,7 +19,7 @@ export function cleanPlan(x) {
   const days = Array.from(new Set((Array.isArray(x.days) ? x.days : []).map(Number).filter((d) => d >= 0 && d <= 6))).sort();
   const date = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : '');
   const history = (Array.isArray(x.history) ? x.history : []).map((h) => ({ date: date(h && h.date), dose: String((h && h.dose) || '').trim().slice(0, 60) })).filter((h) => h.date && h.dose).slice(-30);
-  return { name, dose: String(x.dose || '').trim().slice(0, 60), times, days, notes: String(x.notes || '').trim().slice(0, 200), start: date(x.start), end: date(x.end), history, removed: !!x.removed, updatedAt: +x.updatedAt || 0 };
+  return { name, dose: String(x.dose || '').trim().slice(0, 60), times, days, notes: String(x.notes || '').trim().slice(0, 200), start: date(x.start), end: date(x.end), retest: date(x.retest), retestLabel: String(x.retestLabel || '').trim().slice(0, 40), history, removed: !!x.removed, updatedAt: +x.updatedAt || 0 };
 }
 export function cleanPlans(m) {
   const out = {};
@@ -125,4 +125,48 @@ export function effectCounts(notes, todayStr, days = 30) {
   const from = addDays(todayStr, -(days - 1)); const c = {};
   for (const n of notes) if (n.date >= from && n.date <= todayStr) for (const k of n.effects || []) c[k] = (c[k] || 0) + 1;
   return Object.entries(c).sort((a, b) => b[1] - a[1]);
+}
+
+// A check or retest date tied to a plan: a countdown, a gentle daily line and a count of days given. Kind and never guilt-making.
+const daysBetween = (a, b) => { const [y1, m1, d1] = a.split('-').map(Number); const [y2, m2, d2] = b.split('-').map(Number); return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86400000); };
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const shortDate = (s) => { const [, m, d] = s.split('-').map(Number); return `${d} ${MON[m - 1]}`; };
+export function retestInfo(p, id, doses, today) {
+  if (!p || !p.retest || p.removed) return null;
+  const days = daysBetween(today, p.retest);
+  if (days < -14) return null;
+  const what = p.retestLabel || 'Check-up';
+  // Days given in the last 28 days (or since it started): counted on scheduled days only, today only if already given.
+  const from = p.start && p.start > addDays(today, -27) ? p.start : addDays(today, -27);
+  let sched = 0; let given = 0;
+  for (let d = from; d <= today; d = addDays(d, 1)) {
+    const slots = slotsFor(p, d); if (!slots.length) continue;
+    const got = doses.some((x) => x.planId === id && x.date === d && (x.status === 'taken' || x.status === 'late'));
+    if (d === today && !got) continue;
+    sched++; if (got) given++;
+  }
+  // Only shown when it is encouraging; a lower count simply isn't pointed out.
+  const tally = sched >= 3 && given / sched >= 0.7 ? `${given} of the last ${sched} days given` : '';
+  const n = p.name; const seed = today.length + days;
+  const rot = (a) => a[Math.abs(seed) % a.length];
+  let head; let line; let short;
+  if (days > 14) { head = `${what} in ${days} days (${shortDate(p.retest)}).`; line = rot([`Steady daily ${n} gives the result the best chance of showing a clear picture.`, `A regular daily dose now helps the ${what.toLowerCase()} mean something. Easy does it.`]); short = `${what} in ${days} days`; }
+  else if (days > 7) { head = `${what} in ${days} days.`; line = rot([`Keeping up ${n} each day helps get an effective result.`, `You're building a good run. Keep ${n} going so the result reflects it.`]); short = `${what} in ${days} days`; }
+  else if (days > 1) { head = `${what} in ${days} days.`; line = rot([`Nearly there. Keep up the ${n} so the result is a useful one.`, `Just a few more days of ${n} and then the test.`]); short = `${what} in ${days} days`; }
+  else if (days === 1) { head = `${what} is tomorrow.`; line = `Keep up today's ${n} dose. Then it's done.`; short = `${what} tomorrow`; }
+  else if (days === 0) { head = `${what} is today.`; line = `Today's ${n} dose as usual, unless the clinic has said otherwise. Afterwards you can note the outcome.`; short = `${what} today`; }
+  else { head = `${what} was ${shortDate(p.retest)}.`; line = `Once you have the result, you can clear this date or update the plan with what's next.`; short = `${what} date has passed`; }
+  return { days, head, line, tally, short };
+}
+// A calendar file: repeats daily until the retest date, at the plan's first time, with a pop-up reminder. Times are "floating" (local to the phone).
+export function reminderIcs(p, today, uid) {
+  if (!p || !p.retest || !p.times.length || p.retest < today) return '';
+  const t = p.times[0].replace(':', ''); const d = (s) => s.replace(/-/g, '');
+  const esc = (v) => String(v).replace(/[\\;,]/g, (c) => '\\' + c).replace(/\n/g, '\\n');
+  const stamp = d(today) + 'T000000Z';
+  const end = String(Math.min(2359, +t + 10)).padStart(4, '0');
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Little One//EN', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT', `UID:${uid}@littleone`, `DTSTAMP:${stamp}`,
+    `DTSTART:${d(today)}T${t}00`, `DTEND:${d(today)}T${end}00`, `RRULE:FREQ=DAILY;UNTIL=${d(p.retest)}T235900`,
+    `SUMMARY:${esc(`${p.name}${p.dose ? ' ' + p.dose : ''}`)}`, `DESCRIPTION:${esc(`Keep up the daily dose so the ${p.retestLabel || 'retest'} gives an effective result.`)}`,
+    'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${esc(p.name)}`, 'TRIGGER:PT0M', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR', ''].join('\r\n');
 }

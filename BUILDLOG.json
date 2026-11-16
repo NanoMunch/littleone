@@ -1,5 +1,5 @@
 {
-  "version": "1.22.0",
+  "version": "1.23.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -116,6 +116,10 @@
     {
       "date": "2026-11-16",
       "notes": "1.22.0 Tidier Log tab: cards fold to one summary line (tap to open), one Start a timer card for active play, outdoors, screen time and your private care time (several can run at once), a collapsed 'Might help' in the outlook. History shows the last 24 hours with a Show earlier button and shorter notes. Settings > What I track lets this phone hide cards, hide log areas it doesn't use, or keep cards open."
+    },
+    {
+      "date": "2026-11-16",
+      "notes": "1.23.0 Today's outlook now notices what is carrying on from yesterday (a second short night, a run of bumpier days, sleep easing again) and varies its wording from day to day, in a gentle, no-guilt tone. Medicines can have a check or retest date (for example an iron retest): a countdown, a daily encouragement to keep the dose up, a kind count of days given, and an optional daily reminder file for your calendar."
     }
   ]
 }

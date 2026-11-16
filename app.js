@@ -3,12 +3,12 @@ import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standardUnits } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 import { WHAT, WHY, REPAIR, CUP, CUP_TAGS, SUPPORT, tipsFor, cupTips, momentSummary, childLink, cupLink } from './me.js';
-import { EFFECTS, DAY_NAMES, cleanPlans, mergePlans, activeOn, isPrn, doseId, todayRows, adherence, changePoints, beforeAfter, missedLink, effectCounts } from './meds.js';
+import { EFFECTS, DAY_NAMES, retestInfo, reminderIcs, cleanPlans, mergePlans, activeOn, isPrn, doseId, todayRows, adherence, changePoints, beforeAfter, missedLink, effectCounts } from './meds.js';
 import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.22.0';
+export const APP_VERSION = '1.23.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -723,9 +723,20 @@ export function outlook(all, nights, ratings, todayStr, nowHour, tagMap = new Ma
   const baseAvg = base.length >= 5 ? base.reduce((a, n) => a + n.mins, 0) / base.length : null;
   const last = byWake.get(todayStr);
   let strong = false;
-  if (last && baseAvg != null && baseAvg - last.mins >= 45) {
-    reasons.push(`Last night was ${fmtDur(last.mins)}, about ${fmtDur(Math.round((baseAvg - last.mins) / 5) * 5)} less than their usual ${fmtDur(baseAvg)}.`);
-    tips.add('A calmer start, a warning before each switch and a snack a bit earlier can help on short-sleep days. An earlier bedtime tonight may help too.'); strong = true;
+  // The wording changes with the day, and notices what is carrying on from yesterday, so it reads as following their week.
+  const pick = (arr) => arr[Array.from(todayStr).reduce((a, ch) => a + ch.charCodeAt(0), 0) % arr.length];
+  const yNight = byWake.get(addDays(todayStr, -1));
+  const yShort = !!(yNight && baseAvg != null && baseAvg - yNight.mins >= 45); const yBroken = !!(yNight && yNight.wakings >= 2);
+  const todayShort = !!(last && baseAvg != null && baseAvg - last.mins >= 45);
+  if (todayShort) {
+    const lessBy = fmtDur(Math.round((baseAvg - last.mins) / 5) * 5);
+    reasons.push(yShort
+      ? pick([`A second shorter night in a row: ${fmtDur(last.mins)}, about ${lessBy} under their usual ${fmtDur(baseAvg)}.`, `Sleep was short again last night (${fmtDur(last.mins)}), after a short one the night before.`])
+      : pick([`Last night was ${fmtDur(last.mins)}, about ${lessBy} less than their usual ${fmtDur(baseAvg)}.`, `A shorter night: ${fmtDur(last.mins)} against their usual ${fmtDur(baseAvg)}.`, `Sleep came in at ${fmtDur(last.mins)} last night, a little under their usual ${fmtDur(baseAvg)}.`]));
+    tips.add(yShort ? 'Two short nights can add up. A slower morning, extra warning before switches and an earlier wind-down tonight may help, for you as well as them.' : 'A calmer start, a warning before each switch and a snack a bit earlier can help on short-sleep days. An earlier bedtime tonight may help too.'); strong = true;
+  } else if (last && (yShort || yBroken) && !(last.wakings >= 2)) {
+    reasons.push(pick(['Sleep is closer to their usual today after a rougher night. Yesterday\'s effects may be easing.', 'A steadier night than yesterday. If today feels a little easier, that may be why.']));
+    tips.add('Keeping the evening routine steady can help this settle.');
   }
   if (last && last.wakings >= 2) {
     reasons.push(`${last.wakings === 2 ? 'Two' : last.wakings} night wake-ups last night${last.awake ? ` (about ${Math.round(last.awake)} min awake)` : ''}.`); strong = true;
@@ -737,7 +748,9 @@ export function outlook(all, nights, ratings, todayStr, nowHour, tagMap = new Ma
     if (recent.length >= 2 && lowRun >= 2 && !(last && baseAvg - last.mins >= 45)) { reasons.push(`Sleep has been below their usual on ${lowRun} of the last ${recent.length} nights.`); strong = true; tips.add('An earlier wind-down for a few nights is the simplest thing to try.'); }
   }
   const yd = ratings.get(addDays(todayStr, -1));
-  if (yd != null && yd >= 2.5) { reasons.push(`Yesterday was rated ${dayFeelWord(yd)}.`); tips.add('Starting with 10 minutes of one-on-one time before the first request can help the day get going.'); }
+  const yd2 = ratings.get(addDays(todayStr, -2));
+  if (yd != null && yd >= 2.5 && yd2 != null && yd2 >= 2.5) { reasons.push(pick(['A couple of bumpier days in a row, so today might want a little extra slack.', `Yesterday and the day before were both rated ${dayFeelWord(Math.max(yd, yd2))}.`])); tips.add('A bit of space in the plan, or a short break for you, can be worth it on a run like this. Ten minutes of one-on-one time before the first request can also help.'); }
+  else if (yd != null && yd >= 2.5) { reasons.push(`Yesterday was rated ${dayFeelWord(yd)}.`); tips.add('Starting with 10 minutes of one-on-one time before the first request can help the day get going.'); }
   // Food: only when eating is logged regularly, so no logging doesn't read as no eating.
   const eat = all.filter((e) => e.cat === 'eating' && e.date >= addDays(todayStr, -14));
   // Not in the evening, and not once bedtime has been logged: the gap since dinner isn't a sign of hunger then.
@@ -3428,9 +3441,11 @@ export function renderMedsCard() {
     <div class="act-btns">${stat.map(([k, l]) => `<button type="button" class="chip" data-dose="${esc(r.id)}|${r.slot}|${k}" aria-pressed="${r.status === k}">${l}</button>`).join('')}</div></div>`).join('');
   const prnHTML = prn.map(([id, p]) => { const given = doses.filter((d) => d.planId === id && d.date === t).sort((a, b) => (a.takenAt || '').localeCompare(b.takenAt || '')); return `<div class="med-row"><div class="med-name"><b>💊 ${esc(p.name)}</b><small>${esc([p.dose, 'as needed'].filter(Boolean).join(' · '))}${given.length ? ` · given ${given.length} time${given.length === 1 ? '' : 's'} today, last at ${esc(fmtTime(given[given.length - 1].takenAt || given[given.length - 1].slot))}` : ''}</small></div><div class="act-btns"><button type="button" class="chip" data-prn="${esc(id)}">Give now</button></div></div>`; }).join('');
   const off = rows.filter((r) => r.status === 'missed').length; const late = rows.filter((r) => r.status === 'late').length;
+  const goalHTML = Object.entries(active).map(([id, p]) => { const r = retestInfo(p, id, doses, t); return r ? `<p class="med-goal"><b>${esc(r.head)}</b> ${esc(r.line)}${r.tally ? ` <small>${esc(r.tally)}</small>` : ''}</p>` : ''; }).join('');
+  const nextGoal = Object.entries(active).map(([id, p]) => retestInfo(p, id, doses, t)).filter((r) => r && r.days >= 0).sort((a, b) => a.days - b.days)[0];
   const given = rows.filter((r) => r.status === 'taken' || r.status === 'late').length;
-  const msum = rows.length ? `${given} of ${rows.length} given${off ? ` · ${off} missed` : ''}` : 'As needed only';
-  box.innerHTML = foldCard('meds', 'Medicines today', msum, `${rowHTML}${prnHTML}
+  const msum = (rows.length ? `${given} of ${rows.length} given${off ? ` · ${off} missed` : ''}` : 'As needed only') + (nextGoal ? ` · ${nextGoal.short}` : '');
+  box.innerHTML = foldCard('meds', 'Medicines today', msum, `${rowHTML}${prnHTML}${goalHTML}
     ${off ? '<p class="hint">A dose was missed. Noting how the day goes helps show whether it made a difference.</p>' : late ? '<p class="hint">A dose was given late today.</p>' : ''}
     <div class="act-btns mt10"><button type="button" class="chip" data-act="med-effect">Note an effect</button><button type="button" class="chip" data-act="med-manage">Manage medicines</button></div>`, rows.some((r) => r.overdue && r.status !== 'taken' && r.status !== 'late'), 'act-card');
   box.onclick = async (ev) => {
@@ -3464,6 +3479,7 @@ function openMedSheet(id) {
     <div class="field"><span class="label">Times each day</span><div class="row2 time-grid">${timeInputs}</div><p class="hint">Leave all blank for "as needed".</p></div>
     <div class="field"><span class="label">Days</span><div class="chips" data-mdays>${[1, 2, 3, 4, 5, 6, 0].map((d) => `<button type="button" class="chip" data-mday="${d}" aria-pressed="${days.includes(d)}">${DAY_NAMES[d]}</button>`).join('')}</div><p class="hint">Leave all unselected for every day.</p></div>
     <div class="field"><label class="label" for="mp-start">Started on</label><input class="input" type="date" id="mp-start" max="${today()}" value="${esc(cur ? cur.start : today())}"></div>
+    <div class="field"><label class="label" for="mp-retest">Check or retest on (optional)</label><div class="row2"><input class="input" type="date" id="mp-retest" min="${today()}" value="${esc(cur ? cur.retest : '')}" aria-label="Retest date"><input class="input" id="mp-retestl" maxlength="40" autocomplete="off" placeholder="e.g. Iron retest" value="${esc(cur ? cur.retestLabel : '')}" aria-label="What it is for"></div><p class="hint">Shows a gentle countdown and a daily encouragement on the Medicines card.</p>${cur && cur.retest && cur.times.length ? '<button type="button" class="btn ghost block" data-act="mp-ics">Add a daily reminder to my calendar</button>' : ''}</div>
     <div class="field"><label class="label" for="mp-notes">Notes (optional)</label><input class="input" id="mp-notes" maxlength="200" autocomplete="off" placeholder="e.g. with food" value="${esc(cur ? cur.notes : '')}"></div>
     <div id="mp-msg" hidden></div>
     <button type="button" class="btn primary block" data-act="mp-save">${cur ? 'Save changes' : 'Add'}</button>
@@ -3476,12 +3492,18 @@ function openMedSheet(id) {
         if (btn.dataset.act === 'mp-stop' && id) { all[id] = { ...all[id], end: today(), updatedAt: Date.now() }; await savePlans(all); done(); return; }
         if (btn.dataset.act === 'mp-resume' && id) { all[id] = { ...all[id], end: '', updatedAt: Date.now() }; await savePlans(all); done(); return; }
         if (btn.dataset.act === 'mp-del' && id) { all[id] = { ...all[id], removed: true, updatedAt: Date.now() }; await savePlans(all); done(); toast('Removed'); return; }
+        if (btn.dataset.act === 'mp-ics' && cur) {
+          const ics = reminderIcs(cur, today(), Sync.randomId(12));
+          if (!ics) { toast('Add a retest date and a time first, then save.'); return; }
+          const ok = await shareFile(new Blob([ics], { type: 'text/calendar' }), `${cur.name.replace(/[^\w]+/g, '-').slice(0, 30)}-reminder.ics`, 'text/calendar');
+          if (ok) toast('Open the file to add it to your calendar.'); return;
+        }
         if (btn.dataset.act !== 'mp-save') return;
         const name = $('#mp-name', b).value.trim(); const dose = $('#mp-dose', b).value.trim();
         if (!name) return showMsg($('#mp-msg', b), 'warn', 'Add the medicine name.');
         const times = [0, 1, 2, 3].map((i) => $(`#mp-t${i}`, b).value).filter(Boolean);
         const start = $('#mp-start', b).value || today();
-        const next = { ...(cur || {}), name, dose, times, days, notes: $('#mp-notes', b).value.trim(), start, end: cur ? cur.end : '', history: cur ? cur.history.slice() : [], removed: false, updatedAt: Date.now() };
+        const next = { ...(cur || {}), name, dose, times, days, notes: $('#mp-notes', b).value.trim(), start, retest: $('#mp-retest', b).value || '', retestLabel: $('#mp-retestl', b).value.trim().slice(0, 40), end: cur ? cur.end : '', history: cur ? cur.history.slice() : [], removed: false, updatedAt: Date.now() };
         if (cur && dose && dose !== cur.dose) { const cd = $('#mp-changed', b).value || today(); next.history.push({ date: cd > today() ? today() : cd, dose }); }
         all[id || Sync.randomId(9)] = next; await savePlans(all); done(); toast(cur && dose !== cur.dose ? 'Saved. Dose change marked.' : 'Saved');
       };

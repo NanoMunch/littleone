@@ -8,7 +8,7 @@ import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.21.1';
+export const APP_VERSION = '1.22.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -269,7 +269,7 @@ const S = {
   deviceId: '', myName: '', profile: { childName: '', updatedAt: 0 },
   sync: null, members: {}, lastSyncAt: 0, syncStatus: 'off', syncError: null,
   tab: 'log',
-  hist: { cat: 'all', q: '', limit: 60, open: new Set(), groups: new Map() },
+  hist: { cat: 'all', q: '', limit: 60, days: 1, open: new Set(), groups: new Map() },
   insightRange: '30',
   exp: null, lastPdf: null, pdfUrl: null,
   hiddenItems: {},
@@ -277,7 +277,29 @@ const S = {
   role: 'parent', fam: null, famErr: null, famSeen: {},
   // Care time: a private record on this phone only. It is never added to the synced log or any sync file.
   care: [], careRun: null, actRun: null, scrRun: null, me: [], meView: 'checkin', timeRange: '7',
+  track: loadTrack(), fold: {},
 };
+// What this phone shows. Only a display choice on this phone (localStorage), never synced.
+const TRACK_CARDS = [['dayfeel', 'How did today feel?'], ['activity', 'Outdoors and active play'], ['screen', 'Screen time'], ['meds', 'Medicines today'], ['timer', 'Timers']];
+function loadTrack() {
+  try { const t = JSON.parse(localStorage.getItem('lo-track') || '{}') || {}; const arr = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string').slice(0, 40) : []); return { openCards: !!t.openCards, hide: arr(t.hide), hideCats: arr(t.hideCats), histAll: !!t.histAll }; }
+  catch { return { openCards: false, hide: [], hideCats: [], histAll: false }; }
+}
+function saveTrack() { try { localStorage.setItem('lo-track', JSON.stringify(S.track)); } catch { /* ignore */ } }
+const cardHidden = (k) => S.track.hide.includes(k);
+const foldOpen = (k, dflt) => (S.fold[k] !== undefined ? S.fold[k] : !!(S.track.openCards || dflt));
+// A card that shows one summary line and opens to its detail.
+function foldCard(key, title, summary, body, dflt, cls) {
+  const open = foldOpen(key, dflt);
+  return `<div class="card fold ${cls || ''}" data-fold="${key}"><button type="button" class="fold-head" data-foldtoggle="${key}" aria-expanded="${open}"><span class="fold-title">${esc(title)}</span><span class="fold-sum">${esc(summary || '')}</span><span class="fold-chev" aria-hidden="true"></span></button><div class="fold-body"${open ? '' : ' hidden'}>${body}</div></div>`;
+}
+function setupFolds() {
+  document.addEventListener('click', (ev) => {
+    const t = ev.target.closest('[data-foldtoggle]'); if (!t) return;
+    const k = t.dataset.foldtoggle; const wrap = t.closest('[data-fold]'); const body = wrap && $('.fold-body', wrap); if (!body) return;
+    const open = body.hidden; S.fold[k] = open; body.hidden = !open; t.setAttribute('aria-expanded', String(open));
+  });
+}
 const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'activity' && e.cat !== 'screen' && e.cat !== 'feedback' && e.cat !== 'meddose' && e.cat !== 'sidefx');
 
 // ---------------------------------------------------------------- height and weight
@@ -369,19 +391,20 @@ function dayFeelButtons(date) {
 }
 function renderDayCard() {
   const box = $('#dayfeel-card'); if (!box) return;
-  if (isHelper()) { box.innerHTML = ''; return; }
+  if (isHelper() || cardHidden('dayfeel')) { box.innerHTML = ''; return; }
   const t = today();
   const others = dayfeelEntries().filter((e) => e.date === t && e.byDev !== S.deviceId);
   const mineToday = myDayfeel(t); const myTags = new Set(mineToday && Array.isArray(mineToday.tags) ? mineToday.tags : []);
   const otherTags = Array.from(new Set(dayEntries().filter((e) => e.date === t && e.byDev !== S.deviceId).flatMap((e) => (Array.isArray(e.tags) ? e.tags : [])))).filter((k) => TAG[k] && !myTags.has(k));
   const alsoText = others.length ? `${others.map((e) => `${esc(e.srcName || e.by || 'Partner')}: ${esc(DAYFEEL[e.rating - 1][2].toLowerCase())}`).join(', ')}` : '';
-  box.innerHTML = `<div class="card feel-card"><h3 class="card-title">How did today feel?</h3>
+  const dsum = mineToday && DAYFEEL[mineToday.rating - 1] ? `${DAYFEEL[mineToday.rating - 1][1]} ${DAYFEEL[mineToday.rating - 1][2]}` : 'Not rated yet';
+  box.innerHTML = foldCard('dayfeel', 'How did today feel?', dsum, `
     <div class="feel-row" role="group" aria-label="How did today feel?">${dayFeelButtons(t)}</div>
     <p class="hint feel-hint">${alsoText ? `Also rated: ${alsoText}. ` : ''}Tap again to clear. <button type="button" class="link-btn" data-act="feel-catchup">Rate recent days</button></p>
     <details class="feel-more"${S.feelOpen ? ' open' : ''}><summary>What did today look like?${myTags.size ? ` <span class="n">${myTags.size} picked</span>` : ''}</summary>
       <p class="hint">Optional taps. Over time these show what goes with calmer days.</p>
       <div class="chips" role="group" aria-label="What today looked like">${DAYTAGS_UI.map((t) => `<button type="button" class="chip" data-daytag="${t.k}" aria-pressed="${myTags.has(t.k)}">${t.em} ${esc(t.label)}</button>`).join('')}</div>
-      ${otherTags.length ? `<p class="hint">Also added: ${otherTags.map((k) => esc(TAG[k].label)).join(', ')}.</p>` : ''}</details></div>`;
+      ${otherTags.length ? `<p class="hint">Also added: ${otherTags.map((k) => esc(TAG[k].label)).join(', ')}.</p>` : ''}</details>`, false, 'feel-card');
   box.onclick = async (ev) => {
     const b = ev.target.closest('[data-feel]');
     if (b) { await setDayFeel(b.dataset.date, +b.dataset.feel); renderDayCard(); renderOutlook(); if (S.tab === 'insights') renderInsights(); return; }
@@ -426,10 +449,10 @@ function newActivity(f) {
 }
 async function deleteActivity(e) { await saveActivity({ id: e.id, deleted: true, updatedAt: Date.now(), by: S.myName || '' }); }
 function actTargets() { return moveTargets(ageMonths(S.profile.childBirth, today())); }
-const cleanActRun = (r) => (r && ACT_KINDS[r.kind] && +r.start > 0 && +r.start <= Date.now() + 60000 ? { kind: r.kind, start: +r.start } : null);
+const cleanActRun = (r) => (r && ACT_KINDS[r.kind] && +r.start > 0 && +r.start <= Date.now() + 60000 ? { kind: r.kind, start: +r.start, acc: Math.max(0, +r.acc || 0), resumedAt: +r.resumedAt || +r.start, paused: !!r.paused } : null);
 export function renderActivityCard() {
   const box = $('#activity-card'); if (!box) return;
-  if (isHelper()) { box.innerHTML = ''; return; }
+  if (isHelper() || cardHidden('activity')) { box.innerHTML = ''; return; }
   const t = today(); const all = activityEntries(); const tot = moveTotals(all, t); const tg = actTargets();
   const todays = all.filter((e) => e.date === t).sort((a, b) => (b.time || '').localeCompare(a.time || '') || b.createdAt - a.createdAt);
   const min = (m) => (m >= 60 ? fmtDur(m) : `${Math.round(m)} min`);
@@ -443,37 +466,97 @@ export function renderActivityCard() {
       + bar('Outdoors', tot.outdoors, tg.outdoors, 'A suggestion, not an official guideline.');
   } else if (!S.profile.childBirth) targets = '<p class="hint">Set your child\'s birth month in Settings to see daily targets.</p>';
   const nudge = tg ? moveNudge(tg, tot, new Date().getHours()) : '';
-  const run = S.actRun;
   const quick = (k) => `<div class="act-row"><span class="act-name"><span aria-hidden="true">${ACT_KINDS[k].em}</span> ${ACT_KINDS[k].label}${tot[k] ? ` <small>${min(tot[k])} today</small>` : ''}</span>
     <span class="act-btns">${[10, 30, 60].map((m) => `<button type="button" class="chip" data-actq="${k}:${m}">+${m}</button>`).join('')}<button type="button" class="chip" data-actother="${k}">Other</button></span></div>`;
-  const timer = run
-    ? `<div class="act-timer"><b>${ACT_KINDS[run.kind].em} ${ACT_KINDS[run.kind].label}</b> timing <span data-act-elapsed>${clock(Date.now() - run.start)}</span>
-        <span class="act-btns"><button type="button" class="chip" data-act="act-discard">Discard</button><button type="button" class="chip" aria-pressed="true" data-act="act-stop">Stop and save</button></span></div>`
-    : `<div class="act-timer"><span>Or time it:</span><span class="act-btns"><button type="button" class="chip" data-acttimer="outdoors">▶ Outdoors</button><button type="button" class="chip" data-acttimer="play">▶ Active play</button></span></div>`;
   const rows = todays.map((e) => `<button type="button" class="time-row" data-actedit="${esc(e.id)}"><span><b>${ACT_KINDS[e.kind].em} ${ACT_KINDS[e.kind].label}</b><small>${esc(srcLabel(e))}${e.time ? ` · ${esc(fmtTime(e.time))}${e.end ? ` to ${esc(fmtTime(e.end))}` : ''}` : ''}</small></span><span class="dur">${e.mins ? min(e.mins) : 'some'}</span></button>`).join('');
-  box.innerHTML = `<div class="card act-card"><h3 class="card-title">Outdoors and active play</h3>${targets}
+  const sum = tot.moving || tot.outdoors ? [tot.outdoors ? `${min(tot.outdoors)} outdoors` : '', tot.play ? `${min(tot.play)} active play` : ''].filter(Boolean).join(' · ') + (tg ? ` · ${Math.round(tot.moving)} of ${Math.round(tg.moving)} min moving` : '') : 'Nothing yet';
+  box.innerHTML = foldCard('activity', 'Outdoors and active play', sum, `${targets}
     ${nudge ? `<p class="outlook-tip"><b>Might help:</b> ${esc(nudge)}</p>` : ''}
-    ${quick('outdoors')}${quick('play')}${timer}${rows ? `<div class="act-list">${rows}</div>` : ''}
-    <p class="hint">${tg ? `Based on the Australian 24-hour movement guidelines for ${esc(tg.label)}. ` : ''}Shared with everyone using this log. <button type="button" class="link-btn" data-actother="outdoors" data-actday="1">Add for another day</button></p></div>`;
+    ${quick('outdoors')}${quick('play')}${rows ? `<div class="act-list">${rows}</div>` : ''}
+    <p class="hint">${tg ? `Based on the Australian 24-hour movement guidelines for ${esc(tg.label)}. ` : ''}Shared with everyone using this log. Time it from the timer card above. <button type="button" class="link-btn" data-actother="outdoors" data-actday="1">Add for another day</button></p>`, false, 'act-card');
   applySizes(box);
-  clearInterval(actTick); if (run) actTick = setInterval(() => { const el = $('[data-act-elapsed]'); if (el && S.actRun) el.textContent = clock(Date.now() - S.actRun.start); }, 1000);
   box.onclick = async (ev) => {
     const b = ev.target.closest('button'); if (!b) return;
     const refresh = () => { renderActivityCard(); renderOutlook(); if (S.tab === 'insights') renderInsights(); };
     if (b.dataset.actq) { const [k, m] = b.dataset.actq.split(':'); await saveActivity(newActivity({ kind: k, mins: +m, date: today(), time: '' })); refresh(); toast(`Added ${m} min`, { label: 'Undo', fn: async () => { const last = activityEntries().filter((e) => e.byDev === S.deviceId && e.kind === k && e.mins === +m).sort((a, c) => c.createdAt - a.createdAt)[0]; if (last) { await deleteActivity(last); refresh(); } } }); }
     else if (b.dataset.actother) openActivitySheet(null, b.dataset.actother, !!b.dataset.actday);
     else if (b.dataset.actedit) { const e = S.entries.get(b.dataset.actedit); if (e) openActivitySheet(e, e.kind, false); }
-    else if (b.dataset.acttimer) { S.actRun = { kind: b.dataset.acttimer, start: Date.now() }; await kvSet('actRun', S.actRun); renderActivityCard(); }
-    else if (b.dataset.act === 'act-discard') { S.actRun = null; await kvDel('actRun'); renderActivityCard(); toast('Discarded'); }
-    else if (b.dataset.act === 'act-stop') {
-      const r = S.actRun; if (!r) return; const end = Date.now(); const mins = Math.max(1, Math.round((end - r.start) / 60000));
-      const sd = ymd(new Date(r.start)); const hm = (ms) => `${pad(new Date(ms).getHours())}:${pad(new Date(ms).getMinutes())}`;
-      await saveActivity(newActivity({ kind: r.kind, mins, date: sd, time: hm(r.start), end: hm(end) }));
-      S.actRun = null; await kvDel('actRun'); refresh(); toast(`Saved ${mins} min`);
-    }
   };
 }
-let actTick = null;
+
+// ---------------------------------------------------------------- one timer card
+// Active play, outdoors and screen time (synced entries) and your own care time (private to this phone) share one card.
+const runElapsed = (r) => r.acc + (r.paused ? 0 : Math.max(0, Date.now() - r.resumedAt));
+const hmOf = (ms) => `${pad(new Date(ms).getHours())}:${pad(new Date(ms).getMinutes())}`;
+let tmTick = null;
+function refreshMoves() { renderTimerCard(); renderActivityCard(); renderScreenCard(); renderOutlook(); if (S.tab === 'insights') renderInsights(); if (S.tab === 'time') renderTime(); }
+async function startActTimer(kind) { const n = Date.now(); S.actRun = { kind, start: n, acc: 0, resumedAt: n, paused: false }; await kvSet('actRun', S.actRun); renderTimerCard(); }
+async function startScrTimer(kind) { const n = Date.now(); S.scrRun = { kind, start: n, acc: 0, resumedAt: n, paused: false }; await kvSet('scrRun', S.scrRun); renderTimerCard(); }
+async function startCareTimer(kind) { S.careRun = { start: Date.now(), kind, who: S.careWho || '' }; await kvSet('careRun', S.careRun); renderTimerCard(); if (S.tab === 'time') renderTime(); }
+async function pauseRun(which) {
+  const key = which === 'act' ? 'actRun' : 'scrRun'; const r = S[key]; if (!r) return;
+  const n = { ...r }; if (n.paused) { n.paused = false; n.resumedAt = Date.now(); } else { n.acc = runElapsed(r); n.paused = true; }
+  S[key] = n; await kvSet(key, n); renderTimerCard();
+}
+async function discardRun(which) {
+  const key = which === 'act' ? 'actRun' : which === 'scr' ? 'scrRun' : 'careRun'; S[key] = null; await kvDel(key); toast('Discarded'); refreshMoves();
+}
+async function stopRun(which) {
+  if (which === 'care') {
+    const r = S.careRun; if (!r) return; const end = Date.now();
+    const item = { id: Sync.randomId(9), start: r.start, end: Math.max(end, r.start + 1000), who: r.who || '', kind: r.kind, note: '', createdAt: end, updatedAt: end };
+    S.care.push(item); S.careRun = null; await saveCare(); await kvDel('careRun'); refreshMoves();
+    toast(`Saved ${careDur(careMins(item))}`, { label: 'Undo', fn: async () => { S.care = S.care.filter((x) => x.id !== item.id); await saveCare(); refreshMoves(); } });
+    return;
+  }
+  const key = which === 'act' ? 'actRun' : 'scrRun'; const r = S[key]; if (!r) return;
+  const end = Date.now(); const mins = Math.max(1, Math.round(runElapsed(r) / 60000));
+  const f = { kind: r.kind, mins, date: ymd(new Date(r.start)), time: hmOf(r.start), end: hmOf(end) };
+  await saveActivity(which === 'act' ? newActivity(f) : newScreen(f));
+  S[key] = null; await kvDel(key); refreshMoves(); toast(`Saved ${mins} min`);
+}
+export function renderTimerCard() {
+  const box = $('#timer-card'); if (!box) return;
+  clearInterval(tmTick);
+  if (isHelper() || cardHidden('timer')) { box.innerHTML = ''; return; }
+  const a = S.actRun; const sc = S.scrRun; const c = S.careRun;
+  const clockBtns = (p, r, paused) => `<span class="act-btns"><button type="button" class="chip" data-act="${p}-discard">Discard</button>${paused ? `<button type="button" class="chip" data-act="${p}-pause">${r.paused ? 'Resume' : 'Pause'}</button>` : ''}<button type="button" class="chip" aria-pressed="true" data-act="${p}-stop">Stop and save</button></span>`;
+  let rows = '';
+  if (a) rows += `<div class="act-timer"><span><b>${ACT_KINDS[a.kind].em} ${ACT_KINDS[a.kind].label}</b> <span data-act-elapsed>${clock(runElapsed(a))}</span>${a.paused ? ' <small>(paused)</small>' : ''}</span>${clockBtns('act', a, true)}</div>`;
+  if (sc) { const tg = actTargets(); const note = screenNote(tg, screenCounted(screenEntries(), today()) + (sc.kind !== 'call' ? runElapsed(sc) / 60000 : 0));
+    rows += `<div class="act-timer"><span><b>${SCR_KINDS[sc.kind].em} ${SCR_KINDS[sc.kind].label}</b> <span data-scr-elapsed>${clock(runElapsed(sc))}</span>${sc.paused ? ' <small>(paused)</small>' : ''}</span>${clockBtns('scr', sc, true)}</div>
+      <p class="outlook-tip scr-note" data-scr-note${note ? '' : ' hidden'}>${esc(note)}</p>`; }
+  if (c) rows += `<div class="act-timer"><span><b>${CARE_KIND[c.kind].em} ${CARE_KIND[c.kind].label}</b> <span data-tcare-elapsed>${clock(Date.now() - c.start)}</span> <small>(private)</small></span>${clockBtns('tcare', c, false)}</div>`;
+  const all3 = a && sc && c;
+  box.innerHTML = `<div class="card timer-one${rows ? '' : ' bare'}">${rows}${all3 ? '' : `<button type="button" class="btn ${rows ? 'ghost' : 'dark'} block" data-act="timer-pick">${rows ? '+ Another timer' : 'Start a timer'}</button>`}</div>`;
+  if (a || sc || c) tmTick = setInterval(() => {
+    const ea = $('[data-act-elapsed]'); if (ea && S.actRun) ea.textContent = clock(runElapsed(S.actRun));
+    const es = $('[data-scr-elapsed]'); if (es && S.scrRun) { es.textContent = clock(runElapsed(S.scrRun)); const n = $('[data-scr-note]'); if (n) { const msg = screenNote(actTargets(), screenCounted(screenEntries(), today()) + (S.scrRun.kind !== 'call' ? runElapsed(S.scrRun) / 60000 : 0)); n.textContent = msg; n.hidden = !msg; } }
+    const ec = $('[data-tcare-elapsed]'); if (ec && S.careRun) ec.textContent = clock(Date.now() - S.careRun.start);
+  }, 1000);
+  box.onclick = (ev) => {
+    const b = ev.target.closest('button'); if (!b) return; const d = b.dataset.act || '';
+    if (d === 'timer-pick') openTimerPicker();
+    else if (d === 'act-pause') pauseRun('act'); else if (d === 'scr-pause') pauseRun('scr');
+    else if (d === 'act-stop') stopRun('act'); else if (d === 'scr-stop') stopRun('scr'); else if (d === 'tcare-stop') stopRun('care');
+    else if (d === 'act-discard') discardRun('act'); else if (d === 'scr-discard') discardRun('scr'); else if (d === 'tcare-discard') discardRun('care');
+  };
+}
+function openTimerPicker() {
+  const who = whoOptions();
+  const g1 = S.actRun ? '' : `<h4 class="feel-sub">Your child's day</h4><div class="chips">${Object.entries(ACT_KINDS).map(([k, v]) => `<button type="button" class="chip" data-acttimer="${k}">▶ ${v.em} ${v.label}</button>`).join('')}</div>`;
+  const g2 = S.scrRun ? '' : `<h4 class="feel-sub">Screen time</h4><div class="chips">${Object.entries(SCR_KINDS).map(([k, v]) => `<button type="button" class="chip" data-scrtimer="${k}">▶ ${v.em} ${v.label}</button>`).join('')}</div><p class="hint">Pause when there's a break you expect them to come back from.</p>`;
+  const g3 = S.careRun ? '' : `<h4 class="feel-sub">Your care time</h4><p class="hint">Private to this phone. Your partner and family can't see it.</p>${who.length > 1 ? `<div class="chips" data-pwhos>${whoChips(S.careWho, 'data-pwho')}</div>` : ''}<div class="chips mt10">${CARE_KINDS.map(([k, em, l]) => `<button type="button" class="chip" data-caretimer="${k}">▶ ${em} ${l}</button>`).join('')}</div>`;
+  openSheet('Start a timer', `${g1}${g2}${g3}`, { onMount: (b) => {
+    b.onclick = async (ev) => {
+      const t = ev.target.closest('button'); if (!t) return;
+      if (t.dataset.pwho !== undefined) { S.careWho = t.dataset.pwho; $$('[data-pwho]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === t))); return; }
+      if (t.dataset.acttimer) { closeSheet(); await startActTimer(t.dataset.acttimer); }
+      else if (t.dataset.scrtimer) { closeSheet(); await startScrTimer(t.dataset.scrtimer); }
+      else if (t.dataset.caretimer) { closeSheet(); await startCareTimer(t.dataset.caretimer); }
+    };
+  } });
+}
 function openActivitySheet(item, kind0, pickDay) {
   let kind = item ? item.kind : kind0 || 'outdoors'; const who = whoChoices();
   let wi = Math.max(0, item ? who.findIndex((x) => x.name === item.srcName) : 0);
@@ -539,49 +622,30 @@ function newScreen(f) {
 }
 const cleanScrRun = (r) => (r && SCR_KINDS[r.kind] && +r.start > 0 && +r.start <= Date.now() + 60000 ? { kind: r.kind, start: +r.start, acc: Math.max(0, +r.acc || 0), resumedAt: +r.resumedAt || +r.start, paused: !!r.paused } : null);
 const scrElapsed = (r) => r.acc + (r.paused ? 0 : Math.max(0, Date.now() - r.resumedAt));
-let scrTick = null;
 export function renderScreenCard() {
   const box = $('#screen-card'); if (!box) return;
-  if (isHelper()) { box.innerHTML = ''; return; }
-  const t = today(); const all = screenEntries(); const tg = actTargets(); const run = S.scrRun;
+  if (isHelper() || cardHidden('screen')) { box.innerHTML = ''; return; }
+  const t = today(); const all = screenEntries(); const tg = actTargets();
   const todays = all.filter((e) => e.date === t).sort((a, b) => (b.time || '').localeCompare(a.time || '') || b.createdAt - a.createdAt);
   const counted = screenCounted(all, t); const min = (m) => (m >= 60 ? fmtDur(m) : `${Math.round(m)} min`);
-  const liveMins = () => counted + (run && run.kind !== 'call' ? scrElapsed(run) / 60000 : 0);
   const limit = tg && tg.screenMax > 0 ? tg.screenMax : 0;
   const prog = limit ? `<div class="act-prog"><div class="act-head"><span>Screen time</span><span class="act-num">${min(counted)} of ${min(limit)}</span></div><div class="bar"><div class="track"><div class="fill${counted > limit ? ' over' : ''}" data-w="${Math.max(counted ? 3 : 0, Math.min(100, Math.round((counted / limit) * 100)))}"></div></div></div></div>`
     : `<p class="hint">${counted ? `${min(counted)} so far today.` : ''}${tg && tg.screenMax === 0 ? ' Guidelines suggest no screen time before age 2.' : !tg && !S.profile.childBirth ? ' Set your child\'s birth month in Settings for the daily guideline.' : ''}</p>`;
   const quick = `<div class="act-row"><span class="act-name">Add time</span><span class="act-btns">${[10, 20, 30].map((m) => `<button type="button" class="chip" data-scrq="${m}">+${m}</button>`).join('')}<button type="button" class="chip" data-scrother="1">Other</button></span></div>`;
-  const timer = run
-    ? `<div class="act-timer"><b>${SCR_KINDS[run.kind].em} ${SCR_KINDS[run.kind].label}</b> <span data-scr-elapsed>${clock(scrElapsed(run))}</span>${run.paused ? ' <small>(paused)</small>' : ''}
-        <span class="act-btns"><button type="button" class="chip" data-act="scr-discard">Discard</button><button type="button" class="chip" data-act="scr-pause">${run.paused ? 'Resume' : 'Pause'}</button><button type="button" class="chip" aria-pressed="true" data-act="scr-stop">Stop and save</button></span></div>`
-    : `<div class="act-timer"><span>Or time it:</span><span class="act-btns">${Object.entries(SCR_KINDS).map(([k, v]) => `<button type="button" class="chip" data-scrtimer="${k}">▶ ${v.label}</button>`).join('')}</span></div>
-        <p class="hint">Pause when there's a break you expect them to come back from.</p>`;
   const rows = todays.map((e) => `<button type="button" class="time-row" data-scredit="${esc(e.id)}"><span><b>${SCR_KINDS[e.kind].em} ${SCR_KINDS[e.kind].label}</b><small>${e.kind === 'call' ? 'Not counted toward the limit' : 'Counts toward the limit'}${e.time ? ` · ${esc(fmtTime(e.time))}${e.end ? ` to ${esc(fmtTime(e.end))}` : ''}` : ''}</small></span><span class="dur">${min(e.mins)}</span></button>`).join('');
-  const note = screenNote(tg, liveMins());
-  box.innerHTML = `<div class="card act-card"><h3 class="card-title">Screen time</h3>${prog}
-    <p class="outlook-tip scr-note" data-scr-note${note ? '' : ' hidden'}>${esc(note)}</p>
-    ${quick}${timer}${rows ? `<div class="act-list">${rows}</div>` : ''}
-    <p class="hint">${tg && tg.screenMax ? `Based on the Australian 24-hour movement guidelines for ${esc(tg.label)}. ` : ''}Shared with everyone using this log. <button type="button" class="link-btn" data-scrother="1" data-scrday="1">Add for another day</button></p></div>`;
+  const note = screenNote(tg, counted);
+  const sum = counted ? (limit ? `${min(counted)} of ${min(limit)}` : `${min(counted)} so far`) : 'None logged today';
+  box.innerHTML = foldCard('screen', 'Screen time', sum, `${prog}
+    <p class="outlook-tip scr-note"${note ? '' : ' hidden'}>${esc(note)}</p>
+    ${quick}${rows ? `<div class="act-list">${rows}</div>` : ''}
+    <p class="hint">${tg && tg.screenMax ? `Based on the Australian 24-hour movement guidelines for ${esc(tg.label)}. ` : ''}Shared with everyone using this log. Time it from the timer card above. <button type="button" class="link-btn" data-scrother="1" data-scrday="1">Add for another day</button></p>`, false, 'act-card');
   applySizes(box);
-  clearInterval(scrTick);
-  if (run) scrTick = setInterval(() => {
-    const r = S.scrRun; if (!r) return; const el = $('[data-scr-elapsed]'); if (el) el.textContent = clock(scrElapsed(r));
-    const n = $('[data-scr-note]'); if (n) { const msg = screenNote(tg, liveMins()); n.textContent = msg; n.hidden = !msg; }
-  }, 1000);
   const refresh = () => { renderScreenCard(); if (S.tab === 'insights') renderInsights(); };
   box.onclick = async (ev) => {
     const b = ev.target.closest('button'); if (!b) return;
     if (b.dataset.scrq) { const m = +b.dataset.scrq; await saveActivity(newScreen({ kind: 'show', mins: m, date: today() })); refresh(); toast(`Added ${m} min`, { label: 'Undo', fn: async () => { const last = screenEntries().filter((e) => e.byDev === S.deviceId && e.kind === 'show' && e.mins === m).sort((a, c) => c.createdAt - a.createdAt)[0]; if (last) { await deleteActivity(last); refresh(); } } }); }
     else if (b.dataset.scrother) openScreenSheet(null);
     else if (b.dataset.scredit) { const e = S.entries.get(b.dataset.scredit); if (e) openScreenSheet(e); }
-    else if (b.dataset.scrtimer) { const n = Date.now(); S.scrRun = { kind: b.dataset.scrtimer, start: n, acc: 0, resumedAt: n, paused: false }; await kvSet('scrRun', S.scrRun); renderScreenCard(); }
-    else if (b.dataset.act === 'scr-pause' && run) { const r = { ...run }; if (r.paused) { r.paused = false; r.resumedAt = Date.now(); } else { r.acc = scrElapsed(r); r.paused = true; } S.scrRun = r; await kvSet('scrRun', r); renderScreenCard(); }
-    else if (b.dataset.act === 'scr-discard') { S.scrRun = null; await kvDel('scrRun'); renderScreenCard(); toast('Discarded'); }
-    else if (b.dataset.act === 'scr-stop' && run) {
-      const end = Date.now(); const mins = Math.max(1, Math.round(scrElapsed(run) / 60000)); const hm = (ms) => `${pad(new Date(ms).getHours())}:${pad(new Date(ms).getMinutes())}`;
-      await saveActivity(newScreen({ kind: run.kind, mins, date: ymd(new Date(run.start)), time: hm(run.start), end: hm(end) }));
-      S.scrRun = null; await kvDel('scrRun'); refresh(); toast(`Saved ${mins} min`);
-    }
   };
 }
 function openScreenSheet(item) {
@@ -705,7 +769,7 @@ function renderOutlook() {
   box.innerHTML = `<div class="card outlook ${o.level}" role="region" aria-label="Today's outlook">
     <h3 class="card-title">${o.level === 'harder' ? 'Today may be a bit harder' : 'Worth knowing today'}</h3>
     <ul class="outlook-list">${o.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
-    ${o.tips.length ? `<p class="outlook-tip"><b>Might help:</b> ${o.tips.map(esc).join(' ')}</p>` : ''}
+    ${o.tips.length ? `<details class="outlook-more"><summary>Might help</summary><p class="outlook-tip">${o.tips.map(esc).join(' ')}</p></details>` : ''}
     <p class="hint outlook-foot">Based only on what's been logged, so it can miss things. It isn't a prediction. <button type="button" class="link-btn" data-act="outlook-hide">Hide for today</button> · <button type="button" class="link-btn" data-act="outlook-off">Turn off</button></p></div>`;
   box.onclick = async (ev) => {
     const a = ev.target.closest('[data-act]'); if (!a) return;
@@ -799,6 +863,7 @@ function showMain(opts = {}) {
   renderScreenCard();
   renderMedsCard();
   renderOutlook();
+  renderTimerCard();
   mountLogForm();
   switchTab(S.tab);
   updateSyncPill();
@@ -814,6 +879,7 @@ function renderHeader() {
 function switchTab(tab) {
   if (isHelper() && tab !== 'log' && tab !== 'history') tab = 'log';
   if (tab !== 'time') clearInterval(careTick);
+  if (tab === 'history' && S.tab !== 'history') S.hist.days = S.track.histAll ? 100000 : 1;
   S.tab = tab;
   if (tab === 'log') refreshFormClock();
   $$('.tabbar [data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
@@ -827,7 +893,7 @@ function renderTab() {
   else if (S.tab === 'export') renderExport();
   else if (S.tab === 'time') renderTime();
 }
-function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderActivityCard(); renderScreenCard(); renderMedsCard(); renderOutlook(); }
+function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderActivityCard(); renderScreenCard(); renderMedsCard(); renderOutlook(); renderTimerCard(); }
 
 // ---------------------------------------------------------------- entry form
 // ---- people (shared): partner, carers, family. Stored in the shared profile so every phone sees the same list.
@@ -874,7 +940,7 @@ function formHTML(st, e, mode) {
   </div>
   <div class="field">
     <span class="label" id="${uid}-catl">Area</span>
-    <div class="cat-grid" role="group" aria-labelledby="${uid}-catl">${CATS.map((c) => `<button type="button" class="cat-btn" data-cat="${c.k}" aria-pressed="${st.cat === c.k}"><span class="em" aria-hidden="true">${c.em}</span>${c.label}</button>`).join('')}</div>
+    <div class="cat-grid" role="group" aria-labelledby="${uid}-catl">${CATS.filter((c) => mode === 'edit' || st.cat === c.k || !S.track.hideCats.includes(c.k)).map((c) => `<button type="button" class="cat-btn" data-cat="${c.k}" aria-pressed="${st.cat === c.k}"><span class="em" aria-hidden="true">${c.em}</span>${c.label}</button>`).join('')}</div>
   </div>
   <div class="extra" data-extra hidden></div>
   <div class="field">
@@ -1734,11 +1800,17 @@ function renderHistory() {
   fr.onclick = (ev) => { const b = ev.target.closest('[data-filter]'); if (!b) return; S.hist.cat = b.dataset.filter; S.hist.limit = 60; renderHistory(); };
 
   const q = S.hist.q.trim().toLowerCase();
-  const list = all.filter((e) => (S.hist.cat === 'all' || e.cat === S.hist.cat)
+  // By default only the last 24 hours (and today) show; "Show earlier" adds a week at a time. Searching looks through everything.
+  const cutoffMs = Date.now() - 86400000; const cutoffDate = addDays(today(), -(S.hist.days - 1));
+  const inWindow = (e) => q || S.hist.days > 99999 || (S.hist.days <= 1 ? (e.date >= today() || toMs(e.date, e.time || '23:59') >= cutoffMs) : e.date >= cutoffDate);
+  const matched = all.filter((e) => (S.hist.cat === 'all' || e.cat === S.hist.cat)
     && (!q || [e.title, e.notes, e.med, e.dose, srcLabel(e), e.by, (CAT[e.cat] || {}).label, ...(Array.isArray(e.results) ? e.results.map((r) => r.name) : []), contentsText(e)].join(' ').toLowerCase().includes(q)));
+  const list = matched.filter(inWindow); const hiddenOlder = matched.length - list.length;
+  const earlierBtn = hiddenOlder > 0 ? `<button type="button" class="btn ghost more-btn" data-earlier>Show earlier (${hiddenOlder} more)</button>` : '';
   const box = $('#entry-list');
   if (!list.length) {
-    box.innerHTML = `<div class="empty"><div class="big" aria-hidden="true">📋</div><p>${all.length ? 'Nothing matches that search or filter.' : 'No entries yet. Add the first one from the Log tab.'}</p></div>`;
+    box.innerHTML = `<div class="empty"><div class="big" aria-hidden="true">📋</div><p>${hiddenOlder ? 'Nothing in the last 24 hours.' : all.length ? 'Nothing matches that search or filter.' : 'No entries yet. Add the first one from the Log tab.'}</p></div>${earlierBtn}`;
+    box.onclick = (ev) => { if (ev.target.closest('[data-earlier]')) { S.hist.days = S.hist.days <= 1 ? 8 : S.hist.days + 7; renderHistory(); } };
     return;
   }
   const t = today(); const y = addDays(t, -1);
@@ -1756,9 +1828,11 @@ function renderHistory() {
     groupDay(dayList).forEach((g) => { html += g.items.length > 1 ? groupHTML(g, nightByWake) : entryCardHTML(g.items[0], nightByWake); });
   });
   if (list.length > S.hist.limit) html += `<button type="button" class="btn ghost more-btn" data-more>Show ${Math.min(60, list.length - S.hist.limit)} more</button>`;
+  html += earlierBtn;
   box.innerHTML = html;
   box.onclick = (ev) => {
     if (ev.target.closest('[data-more]')) { S.hist.limit += 60; renderHistory(); return; }
+    if (ev.target.closest('[data-earlier]')) { S.hist.days = S.hist.days <= 1 ? 8 : S.hist.days + 7; renderHistory(); return; }
     const dc = ev.target.closest('[data-check-day]'); if (dc) { openDayCheck(dc.dataset.checkDay); return; }
     const gh = ev.target.closest('[data-group]');
     if (gh) {
@@ -2766,6 +2840,11 @@ async function openSettings() {
         <option value="5-13"${S.profile.sleepGuide === '5-13' ? ' selected' : ''}>Ages 5–13: 9–11 hours a night</option>
         <option value="off"${S.profile.sleepGuide === 'off' ? ' selected' : ''}>Don't show a guideline</option>
       </select><p class="hint">From Australia's 24-Hour Movement Guidelines. Shown as a band on the sleep chart. The 3–5 guideline includes naps.</p></div>
+      <div class="field"><span class="label">What I track</span>
+        <p class="hint">Only changes what this phone shows. Nothing is deleted and your partner's phone is unaffected.</p>
+        <div class="track-list">${TRACK_CARDS.map(([k, l]) => `<label class="check"><input type="checkbox" data-trackcard="${k}"${cardHidden(k) ? '' : ' checked'}> ${esc(l)}</label>`).join('')}
+        <label class="check"><input type="checkbox" data-trackopen="1"${S.track.openCards ? ' checked' : ''}> Keep the cards on the Log tab open</label></div>
+        <span class="label mt10">Log form areas</span><div class="track-list">${CATS.map((c) => `<label class="check"><input type="checkbox" data-trackcat="${c.k}"${S.track.hideCats.includes(c.k) ? '' : ' checked'}> ${c.em} ${esc(c.label)}</label>`).join('')}</div></div>
       <div class="field"><label class="label" for="st-outlook">Today's outlook on the Log tab</label><select class="select" id="st-outlook">
         <option value="on"${S.outlook && S.outlook.off ? '' : ' selected'}>Show it when something stands out</option>
         <option value="off"${S.outlook && S.outlook.off ? ' selected' : ''}>Don't show it</option>
@@ -2819,6 +2898,14 @@ async function openSettings() {
     onMount: (b) => {
       b.onchange = async (ev) => {
         if (ev.target.id === 'st-nrv') { S.profile = { ...S.profile, nrvAge: ev.target.value, updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(); toast('Saved'); }
+        const tgt = ev.target;
+        if (tgt.dataset && (tgt.dataset.trackcard || tgt.dataset.trackcat || tgt.dataset.trackopen)) {
+          const set = (arr, k, on) => (on ? arr.filter((x) => x !== k) : arr.includes(k) ? arr : [...arr, k]);
+          if (tgt.dataset.trackcard) S.track.hide = set(S.track.hide, tgt.dataset.trackcard, tgt.checked);
+          else if (tgt.dataset.trackcat) S.track.hideCats = set(S.track.hideCats, tgt.dataset.trackcat, tgt.checked);
+          else S.track.openCards = tgt.checked;
+          S.fold = {}; saveTrack(); renderDependent(); mountLogForm(); toast('Saved'); return;
+        }
         if (ev.target.id === 'st-outlook') { S.outlook = { ...(S.outlook || {}), off: ev.target.value === 'off' }; await kvSet('outlook', S.outlook); renderOutlook(); toast('Saved'); }
         if (ev.target.id === 'st-sex' || ev.target.id === 'st-birth') {
           const next = { ...S.profile, updatedAt: Date.now() };
@@ -3150,6 +3237,7 @@ function personStatsHTML(list) {
     <p class="hint person-kinds">${Math.round((x.total / all) * 100)}% of the time · ${x.n} session${x.n === 1 ? '' : 's'}${Object.entries(x.kinds).sort((a, b) => b[1] - a[1]).map(([k, mm]) => ` · ${short[k]} ${careDur(mm)}`).join('')}</p>`).join('')}</div>`;
 }
 function renderTime() {
+  renderTimerCard();
   const root = $('#time-body'); if (!root) return;
   if (!$('#me-switch', root)) root.innerHTML = '<div class="chips" id="me-switch"></div><div id="me-main" class="mt10"></div>';
   if (!S.meChosen && S.careRun) S.meView = 'care';
@@ -3330,7 +3418,7 @@ async function setDose(planId, date, slot, status) {
 const nowMin = () => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); };
 export function renderMedsCard() {
   const box = $('#meds-card'); if (!box) return;
-  if (isHelper()) { box.innerHTML = ''; return; }
+  if (isHelper() || cardHidden('meds')) { box.innerHTML = ''; return; }
   const t = today(); const plans = medPlans(); const active = Object.fromEntries(Object.entries(plans).filter(([, p]) => activeOn(p, t)));
   if (!Object.keys(active).length) { box.innerHTML = ''; return; }
   const doses = medDoses(); const rows = todayRows(active, doses.filter((d) => d.date === t), t, nowMin());
@@ -3340,9 +3428,11 @@ export function renderMedsCard() {
     <div class="act-btns">${stat.map(([k, l]) => `<button type="button" class="chip" data-dose="${esc(r.id)}|${r.slot}|${k}" aria-pressed="${r.status === k}">${l}</button>`).join('')}</div></div>`).join('');
   const prnHTML = prn.map(([id, p]) => { const given = doses.filter((d) => d.planId === id && d.date === t).sort((a, b) => (a.takenAt || '').localeCompare(b.takenAt || '')); return `<div class="med-row"><div class="med-name"><b>💊 ${esc(p.name)}</b><small>${esc([p.dose, 'as needed'].filter(Boolean).join(' · '))}${given.length ? ` · given ${given.length} time${given.length === 1 ? '' : 's'} today, last at ${esc(fmtTime(given[given.length - 1].takenAt || given[given.length - 1].slot))}` : ''}</small></div><div class="act-btns"><button type="button" class="chip" data-prn="${esc(id)}">Give now</button></div></div>`; }).join('');
   const off = rows.filter((r) => r.status === 'missed').length; const late = rows.filter((r) => r.status === 'late').length;
-  box.innerHTML = `<div class="card act-card"><h3 class="card-title">Medicines today</h3>${rowHTML}${prnHTML}
+  const given = rows.filter((r) => r.status === 'taken' || r.status === 'late').length;
+  const msum = rows.length ? `${given} of ${rows.length} given${off ? ` · ${off} missed` : ''}` : 'As needed only';
+  box.innerHTML = foldCard('meds', 'Medicines today', msum, `${rowHTML}${prnHTML}
     ${off ? '<p class="hint">A dose was missed. Noting how the day goes helps show whether it made a difference.</p>' : late ? '<p class="hint">A dose was given late today.</p>' : ''}
-    <div class="act-btns mt10"><button type="button" class="chip" data-act="med-effect">Note an effect</button><button type="button" class="chip" data-act="med-manage">Manage medicines</button></div></div>`;
+    <div class="act-btns mt10"><button type="button" class="chip" data-act="med-effect">Note an effect</button><button type="button" class="chip" data-act="med-manage">Manage medicines</button></div>`, rows.some((r) => r.overdue && r.status !== 'taken' && r.status !== 'late'), 'act-card');
   box.onclick = async (ev) => {
     const b = ev.target.closest('button'); if (!b) return;
     const refresh = () => { renderMedsCard(); renderOutlook(); if (S.tab === 'insights') renderInsights(); };
@@ -3775,6 +3865,7 @@ async function init() {
   (await getAllEntries()).forEach((e) => S.entries.set(e.id, e));
 
   registerSW();
+  setupFolds();
 
   document.addEventListener('click', (ev) => {
     const t = ev.target.closest('[data-act]'); if (!t) return;

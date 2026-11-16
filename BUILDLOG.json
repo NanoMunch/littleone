@@ -1,5 +1,5 @@
 {
-  "version": "1.21.1",
+  "version": "1.22.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -19,7 +19,7 @@
     },
     {
       "date": "2026-10-17",
-      "notes": "1.2.1 One-tap \"Log a night wake-up now\" under Sleep (3\u20135 min, current time, undo). Night wake-ups are a sleep type with minutes awake, taken off the night total."
+      "notes": "1.2.1 One-tap \"Log a night wake-up now\" under Sleep (3–5 min, current time, undo). Night wake-ups are a sleep type with minutes awake, taken off the night total."
     },
     {
       "date": "2026-10-17",
@@ -51,7 +51,7 @@
     },
     {
       "date": "2026-10-21",
-      "notes": "1.8.1 Nature's Way Kids Smart Vita Gummies Multi-Vitamin for Fussy Eaters added as a ready-made supplement: ingredients per gummy from the label, counted in gummies, defaulting to the label dose for the age group (1 for ages 1\u20133, 2 otherwise), and included in the supplement check. Ready-made chips stay visible in the product form so you can switch between products. Amounts under 1 show three decimals."
+      "notes": "1.8.1 Nature's Way Kids Smart Vita Gummies Multi-Vitamin for Fussy Eaters added as a ready-made supplement: ingredients per gummy from the label, counted in gummies, defaulting to the label dose for the age group (1 for ages 1–3, 2 otherwise), and included in the supplement check. Ready-made chips stay visible in the product form so you can switch between products. Amounts under 1 show three decimals."
     },
     {
       "date": "2026-11-02",
@@ -112,6 +112,10 @@
     {
       "date": "2026-11-16",
       "notes": "1.21.1 Me/Time care time: your partner now appears automatically in 'Who is doing it?' (and when adding or editing time), so you can log what you know they did. The picker is always shown, with an 'Add someone' button for anyone else."
+    },
+    {
+      "date": "2026-11-16",
+      "notes": "1.22.0 Tidier Log tab: cards fold to one summary line (tap to open), one Start a timer card for active play, outdoors, screen time and your private care time (several can run at once), a collapsed 'Might help' in the outlook. History shows the last 24 hours with a Show earlier button and shorter notes. Settings > What I track lets this phone hide cards, hide log areas it doesn't use, or keep cards open."
     }
   ]
 }

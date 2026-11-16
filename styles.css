@@ -254,8 +254,8 @@ input[type="date"].input::-webkit-date-and-time-value, input[type="time"].input:
 .entry-cat { font-size: .8rem; font-weight: 500; color: var(--muted); }
 .entry-when { font-size: .78rem; color: var(--muted); font-family: var(--serif); font-style: italic; white-space: nowrap; margin-left: auto; }
 .entry-title { font-family: var(--serif); font-size: 1.04rem; line-height: 1.3; margin-bottom: 2px; overflow-wrap: anywhere; }
-.entry-notes { font-size: .88rem; color: var(--muted); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.entry-extra { font-size: .84rem; margin: 3px 0 2px; color: var(--ink); }
+.entry-notes { font-size: .88rem; color: var(--muted); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 1; line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.entry-extra { font-size: .84rem; margin: 3px 0 2px; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 /* several supplements, medicines or wake-ups shown as one line that opens */
 .entry-group { padding: 0; }
@@ -648,3 +648,19 @@ a.btn { text-decoration: none; }
 .med-listed { margin-top: 4px; font-size: .8rem; }
 .med-listed summary { cursor: pointer; color: var(--terracotta-ink); }
 .time-grid { grid-template-columns: 1fr 1fr; }
+
+/* 1.22.0: folding cards, one timer card, tracking choices */
+.fold { padding: 0; }
+.fold-head { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 10px; width: 100%; padding: 13px 16px; cursor: pointer; min-height: 48px; }
+.fold-head:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: -2px; border-radius: 12px; }
+.fold-title { font-weight: 600; flex: 0 0 auto; }
+.fold-sum { flex: 1 1 auto; text-align: right; color: var(--muted); font-size: .86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.fold-chev { flex: 0 0 auto; width: 8px; height: 8px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); margin: 0 4px 3px 2px; transition: transform .15s; }
+.fold-head[aria-expanded="true"] .fold-chev { transform: rotate(-135deg); margin-bottom: -2px; }
+.fold-body { padding: 0 16px 14px; }
+.fold-body[hidden] { display: none; }
+.timer-one { display: grid; gap: 8px; }
+.timer-one.bare { background: none; border: 0; box-shadow: none; padding: 0; }
+.outlook-more > summary { cursor: pointer; font-weight: 600; font-size: .9rem; padding: 4px 0; }
+.track-list { display: grid; gap: 6px; margin-top: 6px; }
+.track-list .check { display: flex; align-items: center; gap: 8px; min-height: 36px; }

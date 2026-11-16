@@ -1,5 +1,5 @@
 {
-  "version": "1.24.0",
+  "version": "1.25.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -124,6 +124,10 @@
     {
       "date": "2026-11-16",
       "notes": "1.24.0 New log areas: Lessons & sport (engagement, confidence, wants to go back), Kinder & school (where, how it went, pick-up mood, pick-up meltdown), Self-care skills, Tantrums (length, what came before, how it settled, afterwards), plus chips on Social. Quick taps for whining and 'said they don't love me'. Insights shows gentle patterns and ideas for each. More timer circumstances (bedtime routine, meals, playing together, pick-ups, meltdown support)."
+    },
+    {
+      "date": "2026-11-16",
+      "notes": "1.25.0 Bedtime routines (a usual one plus different ones for particular days or nights, timed steps with notes, ticking steps off or skipping them, a gentle 'now' line and still-to-do marking), a days-ahead plan (food, where things are, notes, medicines, appointments), shared appointments with repeats, reminders, an add-to-calendar file and a 'how did it go?' prompt that saves to the log, and carer questions and notes the parents can answer. Family members can be given the routine and plan, locked with their own key."
     }
   ]
 }

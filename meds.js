@@ -19,7 +19,7 @@ export function cleanPlan(x) {
   const days = Array.from(new Set((Array.isArray(x.days) ? x.days : []).map(Number).filter((d) => d >= 0 && d <= 6))).sort();
   const date = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : '');
   const history = (Array.isArray(x.history) ? x.history : []).map((h) => ({ date: date(h && h.date), dose: String((h && h.dose) || '').trim().slice(0, 60) })).filter((h) => h.date && h.dose).slice(-30);
-  return { name, dose: String(x.dose || '').trim().slice(0, 60), times, days, notes: String(x.notes || '').trim().slice(0, 200), start: date(x.start), end: date(x.end), retest: date(x.retest), retestLabel: String(x.retestLabel || '').trim().slice(0, 40), history, removed: !!x.removed, updatedAt: +x.updatedAt || 0 };
+  return { name, dose: String(x.dose || '').trim().slice(0, 60), times, days, notes: String(x.notes || '').trim().slice(0, 200), start: date(x.start), end: date(x.end), carers: !!x.carers, retest: date(x.retest), retestLabel: String(x.retestLabel || '').trim().slice(0, 40), history, removed: !!x.removed, updatedAt: +x.updatedAt || 0 };
 }
 export function cleanPlans(m) {
   const out = {};

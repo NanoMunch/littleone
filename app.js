@@ -3,13 +3,14 @@ import * as Sync from './sync.js';
 import { PRODUCTS, productFor, scaledNutrients, productDose, fmtAmount, standardUnits } from './products.js';
 import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 import { WHAT, WHY, REPAIR, CUP, CUP_TAGS, SUPPORT, tipsFor, cupTips, momentSummary, childLink, cupLink } from './me.js';
+import { cleanHome, mergeHome, variantFor, stepStatus, routineWeek, occurrences, upcoming, followUps, reminders, apptIcs, carerView, tickId, REPEATS } from './home.js';
 import { DETAILS, DETAIL_NUMS, cleanDetail, cleanNum, hasDetail as hasMoment, detailText, detailTitle, momentCards, tallyStats, tallyNotes } from './moments.js';
-import { EFFECTS, DAY_NAMES, retestInfo, reminderIcs, cleanPlans, mergePlans, activeOn, isPrn, doseId, todayRows, adherence, changePoints, beforeAfter, missedLink, effectCounts } from './meds.js';
+import { EFFECTS, DAY_NAMES, retestInfo, reminderIcs, slotsFor, cleanPlans, mergePlans, activeOn, isPrn, doseId, todayRows, adherence, changePoints, beforeAfter, missedLink, effectCounts } from './meds.js';
 import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.24.0';
+export const APP_VERSION = '1.25.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -283,10 +284,10 @@ const S = {
   role: 'parent', fam: null, famErr: null, famSeen: {},
   // Care time: a private record on this phone only. It is never added to the synced log or any sync file.
   care: [], careRun: null, actRun: null, scrRun: null, me: [], meView: 'checkin', timeRange: '7',
-  track: loadTrack(), fold: {},
+  track: loadTrack(), fold: {}, plan: null,
 };
 // What this phone shows. Only a display choice on this phone (localStorage), never synced.
-const TRACK_CARDS = [['dayfeel', 'How did today feel?'], ['activity', 'Outdoors and active play'], ['screen', 'Screen time'], ['tally', 'Quick taps'], ['meds', 'Medicines today'], ['timer', 'Timers']];
+const TRACK_CARDS = [['dayfeel', 'How did today feel?'], ['activity', 'Outdoors and active play'], ['screen', 'Screen time'], ['tally', 'Quick taps'], ['meds', 'Medicines today'], ['routine', "Tonight's routine"], ['plan', 'Days ahead'], ['appt', 'Appointments'], ['ask', 'Carer questions'], ['timer', 'Timers']];
 function loadTrack() {
   try { const t = JSON.parse(localStorage.getItem('lo-track') || '{}') || {}; const arr = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string').slice(0, 40) : []); return { openCards: !!t.openCards, hide: arr(t.hide), hideCats: arr(t.hideCats), histAll: !!t.histAll }; }
   catch { return { openCards: false, hide: [], hideCats: [], histAll: false }; }
@@ -306,7 +307,7 @@ function setupFolds() {
     const open = body.hidden; S.fold[k] = open; body.hidden = !open; t.setAttribute('aria-expanded', String(open));
   });
 }
-const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'tally' && e.cat !== 'activity' && e.cat !== 'screen' && e.cat !== 'feedback' && e.cat !== 'meddose' && e.cat !== 'sidefx');
+const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'tally' && e.cat !== 'tick' && e.cat !== 'ask' && e.cat !== 'activity' && e.cat !== 'screen' && e.cat !== 'feedback' && e.cat !== 'meddose' && e.cat !== 'sidefx');
 
 // ---------------------------------------------------------------- height and weight
 // Height in centimetres and weight in kilograms, as typed ("104.5", "104,5", "17.2 kg"). Returns NaN when
@@ -522,6 +523,318 @@ function momentsInsightHTML() {
   if (isHelper()) return '';
   return momentCards(live(), today()).map((c) => `<div class="card"><h3 class="card-title">${esc(c.title)}</h3><p class="hint">${c.facts.map(esc).join(' ')}</p>${c.tips.length ? `<p class="outlook-tip"><b>Might help:</b> ${c.tips.map(esc).join(' ')}</p>` : ''}</div>`).join('');
 }
+// ---------------------------------------------------------------- bedtime routine, days ahead, appointments, carer questions
+// Shared between parents (inside the profile). Carers only receive what is opted in, locked with their own key.
+const home = () => cleanHome(S.profile && S.profile.home);
+async function saveHome(h) { S.profile = { ...S.profile, home: cleanHome(h), updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(300); renderHomeCards(); }
+const planData = () => (isHelper() && S.plan && !S.plan.empty ? S.plan : null);
+const whoId = () => (isHelper() && S.fam ? S.fam.id : '');
+const hmMin = (hm) => { const [h, m] = String(hm || '0:0').split(':').map(Number); return h * 60 + m; };
+const hmFromMs = (ms) => `${pad(new Date(ms).getHours())}:${pad(new Date(ms).getMinutes())}`;
+function ticksFor(date) {
+  const out = {};
+  if (isHelper() && S.plan && Array.isArray(S.plan.ticks)) S.plan.ticks.forEach((k) => { if (k && k.date === date) out[k.stepId] = { at: k.at, skip: !!k.skip, by: k.by }; });
+  S.entries.forEach((e) => { if (e && e.cat === 'tick' && !e.deleted && e.date === date) out[e.stepId] = { at: e.at, skip: !!e.skip, by: e.by }; });
+  return out;
+}
+async function tickStep(date, step, mode) {
+  const id = tickId(date, step.id, whoId()); const now = Date.now();
+  if (mode === 'clear') await deleteActivity({ id });
+  else await saveActivity({ id, createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, cat: 'tick', stepId: step.id, at: now, skip: mode === 'skip', title: '', notes: '', sev: 0, src: 'parent', srcName: S.myName || 'Me', date, time: nowHHMM(), tod: todOf(nowHHMM()) });
+  renderRoutineCard(); if (S.tab === 'insights') renderInsights();
+}
+// Questions and notes from carers (entries of kind 'ask'), and the parents' answers (profile.home.qa).
+const askEntries = () => Array.from(S.entries.values()).filter((e) => e && e.cat === 'ask' && !e.deleted && e.text);
+function qaOf(id) { return isHelper() ? ((S.plan && S.plan.qa) || {})[id] : home().qa[id]; }
+function openAskSheet(ref) {
+  openSheet(ref.kind === 'note' ? 'Note for the parents' : 'Ask a question', `<p class="hint intro">${esc(ref.label || '')}</p>
+    <div class="field"><label class="label" for="ask-text">${ref.kind === 'note' ? 'Your note' : 'Your question'}</label><textarea class="input" id="ask-text" rows="3" maxlength="300" placeholder="${ref.kind === 'note' ? 'e.g. We ran out of milk' : 'e.g. Where is the dinner?'}"></textarea></div>
+    <button type="button" class="btn dark block" data-act="ask-send">Send</button>
+    <p class="hint">The parents see it next time they open the app and reply here. For anything urgent, call them.</p>`, { onMount: (b) => {
+    b.onclick = async (ev) => {
+      if (!ev.target.closest('[data-act="ask-send"]')) return; const text = $('#ask-text', b).value.trim(); if (!text) { toast('Write a line first'); return; }
+      const now = Date.now();
+      await saveActivity({ id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, cat: 'ask', kind: ref.kind || 'q', text: text.slice(0, 300), refKey: ref.key || '', refLabel: String(ref.label || '').slice(0, 80), title: '', notes: '', sev: 0, src: 'parent', srcName: S.myName || 'Me', date: today(), time: nowHHMM(), tod: todOf(nowHHMM()) });
+      closeSheet(); toast('Sent'); renderHomeCards();
+    };
+  } });
+}
+function qaBlock(refKey) {
+  if (!isHelper()) return '';
+  const list = askEntries().filter((e) => e.refKey === refKey).slice(-3);
+  return list.map((e) => { const a = qaOf(e.id); return `<span class="rt-qa"><small>${e.kind === 'note' ? 'Note' : 'You asked'}: ${esc(e.text)}</small>${a && a.a ? `<small class="rt-ans"><b>Answer:</b> ${esc(a.a)}</small>` : ''}</span>`; }).join('');
+}
+
+// ---- tonight's routine
+export function renderRoutineCard() {
+  const box = $('#routine-card'); if (!box) return;
+  const routine = isHelper() ? (planData() && planData().routine) : home().routine;
+  if (!routine || cardHidden('routine')) { box.innerHTML = ''; return; }
+  const t = today(); const v = variantFor(routine, t);
+  if (!v || !v.steps.length) { box.innerHTML = ''; return; }
+  const now = nowHHMM(); const st = stepStatus(v.steps, ticksFor(t), now, true);
+  const first = hmMin(v.steps[0].time); const last = hmMin((v.steps[v.steps.length - 1].end || v.steps[v.steps.length - 1].time));
+  const inWindow = hmMin(now) >= first - 60 && hmMin(now) <= last + 90;
+  const nextOpen = st.items.find((i) => i.state === 'open');
+  const sum = !nextOpen ? `All done (${st.done} of ${st.items.length})` : nextOpen.missed ? `Still to do: ${nextOpen.step.text}` : `Next: ${nextOpen.step.text} ${fmtTime(nextOpen.step.time)}`;
+  const rows = st.items.map((i, ix) => {
+    const s = i.step; const here = ix === st.here ? `<li class="rt-here" aria-label="Now"><span>Now ${esc(fmtTime(now))}</span></li>` : '';
+    const doneTxt = i.state === 'done' && i.tick ? `Done ${fmtTime(hmFromMs(i.tick.at))}${i.tick.by && i.tick.by !== S.myName ? ` by ${esc(i.tick.by)}` : ''}` : i.state === 'skipped' ? 'Skipped' : '';
+    return `${here}<li class="rt-step ${i.state}${i.missed ? ' missed' : ''}"><span class="rt-time">${esc(fmtTime(s.time))}${s.end ? `<small>to ${esc(fmtTime(s.end))}</small>` : ''}</span>
+      <span class="rt-text"><b>${esc(s.text)}</b>${s.note ? `<small>${esc(s.note)}</small>` : ''}${doneTxt ? `<small class="rt-done">${doneTxt}</small>` : ''}${i.missed ? '<small class="rt-tag">Still to do</small>' : ''}${qaBlock(s.id)}</span>
+      <span class="rt-btns">${i.state === 'open' ? `<button type="button" class="chip" data-rt="done|${s.id}">Done</button><button type="button" class="chip" data-rt="skip|${s.id}">Skip</button>` : `<button type="button" class="chip" data-rt="clear|${s.id}">Undo</button>`}${isHelper() ? `<button type="button" class="chip" data-rt="ask|${s.id}">Ask</button>` : ''}</span></li>`;
+  }).join('') + (st.here >= st.items.length ? `<li class="rt-here" aria-label="Now"><span>Now ${esc(fmtTime(now))}</span></li>` : '');
+  box.innerHTML = foldCard('routine', `Tonight's routine${v.name && v.name !== 'Routine' ? ` · ${v.name}` : ''}`, sum, `<ol class="rt-list">${rows}</ol>
+    <div class="rt-foot">${isHelper() ? '' : '<button type="button" class="link-btn" data-rt="tonight|">Different routine tonight</button> <button type="button" class="link-btn" data-rt="edit|">Edit routines</button>'}</div>`, inWindow, 'rt-card');
+  box.onclick = (ev) => {
+    const b = ev.target.closest('[data-rt]'); if (!b) return; const [act, id] = b.dataset.rt.split('|'); const step = v.steps.find((x) => x.id === id);
+    if (act === 'tonight') openTonightSheet(); else if (act === 'edit') openRoutineEditor();
+    else if (act === 'ask' && step) openAskSheet({ kind: 'q', key: step.id, label: `About: ${step.text} (${fmtTime(step.time)})` });
+    else if (step) tickStep(t, step, act);
+  };
+}
+function openTonightSheet() {
+  const h = home(); const t = today(); const cur = h.routine.overrides[t]; const vs = Object.values(h.routine.variants).filter((v) => !v.removed);
+  openSheet('Routine tonight', `<div class="chips" data-tn>${vs.map((v) => `<button type="button" class="chip" data-tn="${v.id}" aria-pressed="${!!cur && cur.v === v.id}">${esc(v.name)}</button>`).join('')}<button type="button" class="chip" data-tn="none" aria-pressed="${!!cur && cur.v === 'none'}">No routine tonight</button><button type="button" class="chip" data-tn="" aria-pressed="${!cur}">Back to the usual</button></div>`, { onMount: (b) => {
+    b.onclick = async (ev) => { const c = ev.target.closest('[data-tn]'); if (!c) return; const hh = home();
+      hh.routine.overrides[t] = { v: c.dataset.tn, updatedAt: Date.now() }; closeSheet(); await saveHome(hh); };
+  } });
+}
+
+// ---- editing the routines
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const daysLabel = (d) => (!d.length ? 'Usual routine' : d.length === 7 ? 'Every day' : d.map((x) => DOW[x]).join(', '));
+function openRoutineEditor() {
+  const h = home(); const vs = Object.values(h.routine.variants).filter((v) => !v.removed).sort((a, b) => (a.days.length ? 1 : 0) - (b.days.length ? 1 : 0));
+  const t = today(); const ovs = Object.entries(h.routine.overrides).filter(([d, o]) => d >= t && o.v !== '').sort();
+  const nameOf = (v) => (v === 'none' ? 'No routine' : (h.routine.variants[v] || {}).name || '?');
+  openSheet('Bedtime routines', `<p class="hint intro">One usual routine, plus different ones for particular days (weekends, swimming nights). Each step has a time and an optional note, such as where things are.</p>
+    ${vs.length ? `<div class="card kv-card">${vs.map((v) => `<div class="kv helper-row"><span><b>${esc(v.name)}</b><small>${esc(daysLabel(v.days))} · ${v.steps.length} step${v.steps.length === 1 ? '' : 's'}${v.carers ? ' · shared with carers' : ''}</small></span><span class="mini-links"><button type="button" data-rv="edit|${v.id}">Edit</button><button type="button" data-rv="del|${v.id}">Remove</button></span></div>`).join('')}</div>` : '<p class="hint">No routine yet.</p>'}
+    <button type="button" class="btn dark block" data-rv="new|">Add a routine</button>
+    <h4 class="feel-sub">A different routine on one night</h4>
+    <div class="row2"><input class="input" type="date" id="ov-date" min="${t}" value="${t}" aria-label="Night"><select class="input" id="ov-v" aria-label="Routine">${vs.map((v) => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}<option value="none">No routine</option></select></div>
+    <button type="button" class="btn ghost block" data-rv="ov|">Set for that night</button>
+    ${ovs.length ? `<div class="card kv-card">${ovs.map(([d, o]) => `<div class="kv helper-row"><span><b>${esc(fmtDayShort(d))}</b><small>${esc(nameOf(o.v))}</small></span><span class="mini-links"><button type="button" data-rv="clr|${d}">Clear</button></span></div>`).join('')}</div>` : ''}
+    <div class="field"><label class="label" for="cv-days">Days ahead carers can see</label><select class="input" id="cv-days">${[1, 2, 3, 4, 5, 6, 7].map((n) => `<option value="${n}"${h.cfg.carerDays === n ? ' selected' : ''}>${n} day${n === 1 ? '' : 's'}</option>`).join('')}</select></div>`, { onMount: (b) => {
+    $('#cv-days', b).onchange = async (ev) => { const hh = home(); hh.cfg = { carerDays: +ev.target.value, updatedAt: Date.now() }; await saveHome(hh); toast('Saved'); };
+    b.onclick = async (ev) => {
+      const c = ev.target.closest('[data-rv]'); if (!c) return; const [act, id] = c.dataset.rv.split('|'); const hh = home();
+      if (act === 'new' || act === 'edit') openVariantSheet(id || '');
+      else if (act === 'del') { hh.routine.variants[id] = { ...hh.routine.variants[id], removed: true, updatedAt: Date.now() }; await saveHome(hh); openRoutineEditor(); }
+      else if (act === 'ov') { const d = $('#ov-date', b).value; if (!d) return; hh.routine.overrides[d] = { v: $('#ov-v', b).value, updatedAt: Date.now() }; await saveHome(hh); openRoutineEditor(); }
+      else if (act === 'clr') { hh.routine.overrides[id] = { v: '', updatedAt: Date.now() }; await saveHome(hh); openRoutineEditor(); }
+    };
+  } });
+}
+function stepRowHTML(s) {
+  return `<div class="rt-edit" data-srow="${esc(s.id || '')}"><div class="row2"><input class="input" type="time" data-s="time" value="${esc(s.time || '')}" aria-label="Time"><input class="input" type="time" data-s="end" value="${esc(s.end || '')}" aria-label="Ends (optional)"></div>
+    <input class="input" data-s="text" maxlength="80" placeholder="e.g. Bath" value="${esc(s.text || '')}" aria-label="Step">
+    <input class="input" data-s="note" maxlength="200" placeholder="Note, e.g. towels are in the blue basket" value="${esc(s.note || '')}" aria-label="Note">
+    <label class="check"><input type="checkbox" data-s="parentsOnly"${s.parentsOnly ? ' checked' : ''}> Parents only</label> <button type="button" class="link-btn" data-s-del="1">Remove step</button></div>`;
+}
+function openVariantSheet(id) {
+  const h = home(); const cur = id ? h.routine.variants[id] : null;
+  const v = cur || { name: '', days: [], steps: [], carers: false };
+  openSheet(cur ? 'Edit routine' : 'New routine', `
+    <div class="field"><label class="label" for="rv-name">Name</label><input class="input" id="rv-name" maxlength="40" placeholder="e.g. Usual, Weekend, Swimming night" value="${esc(v.name)}"></div>
+    <div class="field"><span class="label">Which days</span><div class="chips" data-rdays>${DOW.map((n, i) => `<button type="button" class="chip" data-rd="${i}" aria-pressed="${v.days.includes(i)}">${n}</button>`).join('')}</div><p class="hint">Leave all off for the usual routine on every other day.</p></div>
+    <label class="check"><input type="checkbox" id="rv-carers"${v.carers ? ' checked' : ''}> Share with carers</label>
+    <div class="field"><span class="label">Steps</span><div id="rv-steps">${v.steps.map(stepRowHTML).join('')}</div><button type="button" class="btn ghost block" data-rv2="add">Add a step</button></div>
+    <button type="button" class="btn dark block" data-rv2="save">Save</button>`, { full: true, onMount: (b) => {
+    const days = new Set(v.days);
+    b.onclick = async (ev) => {
+      const d = ev.target.closest('[data-rd]'); if (d) { const n = +d.dataset.rd; if (days.has(n)) days.delete(n); else days.add(n); d.setAttribute('aria-pressed', String(days.has(n))); return; }
+      const del = ev.target.closest('[data-s-del]'); if (del) { del.closest('.rt-edit').remove(); return; }
+      const c = ev.target.closest('[data-rv2]'); if (!c) return;
+      if (c.dataset.rv2 === 'add') { const last = $$('[data-s="time"]', b).pop(); const wrap = document.createElement('div'); wrap.innerHTML = stepRowHTML({ time: '' }); $('#rv-steps', b).appendChild(wrap.firstElementChild); if (last) { /* keep order by time on save */ } return; }
+      const steps = $$('.rt-edit', b).map((r) => ({ id: r.dataset.srow || '', time: $('[data-s="time"]', r).value, end: $('[data-s="end"]', r).value, text: $('[data-s="text"]', r).value, note: $('[data-s="note"]', r).value, parentsOnly: $('[data-s="parentsOnly"]', r).checked }));
+      const name = $('#rv-name', b).value.trim() || 'Routine'; const hh = home(); const vid = cur ? cur.id : Sync.randomId(8);
+      if (!steps.some((s) => s.time && s.text.trim())) { toast('Add at least one step with a time'); return; }
+      hh.routine.variants[vid] = { id: vid, name, days: Array.from(days).sort(), steps, carers: $('#rv-carers', b).checked, removed: false, updatedAt: Date.now() };
+      await saveHome(hh); toast('Saved'); openRoutineEditor();
+    };
+  } });
+}
+
+// ---- days ahead
+const dayName = (d) => (d === today() ? 'Today' : d === addDays(today(), 1) ? 'Tomorrow' : fmtDayShort(d));
+function medsOnDay(d) {
+  const list = isHelper() ? ((planData() && planData().meds) || []) : Object.values(cleanPlans(S.profile.meds));
+  return list.filter((p) => p && !isPrn(p) && slotsFor(p, d).length).map((p) => `${p.name}${p.dose ? ` ${p.dose}` : ''} at ${slotsFor(p, d).map(fmtTime).join(', ')}`);
+}
+export function renderPlanCard() {
+  const box = $('#plan-card'); if (!box) return;
+  if (cardHidden('plan')) { box.innerHTML = ''; return; }
+  const t = today(); const now = nowHHMM(); const h = home(); const pd = planData();
+  if (isHelper() && !pd) { box.innerHTML = ''; return; }
+  const n = isHelper() ? Math.max(1, Math.min(7, pd.span || 7)) : 7;
+  const appts = isHelper() ? pd.appts.map((o) => ({ date: o.date, time: o.time, who: o.who, what: o.what, place: o.place })) : upcoming(h.appts, t, now, n - 1).map((o) => ({ date: o.date, time: o.time, who: o.appt.who, what: o.appt.what, place: o.appt.place, shared: o.appt.carers }));
+  const days = isHelper() ? pd.days : h.days;
+  const rows = []; let any = false;
+  for (let i = 0; i < n; i++) {
+    const d = addDays(t, i); const x = days[d] && !days[d].removed ? days[d] : null; const ap = appts.filter((a) => a.date === d); const md = medsOnDay(d);
+    const lines = [...ap.map((a) => `<div class="pl-line">📅 <b>${esc([a.who, a.what].filter(Boolean).join(': '))}</b>${a.time ? ` ${esc(fmtTime(a.time))}` : ''}${a.place ? ` · ${esc(a.place)}` : ''}</div>`),
+      ...md.map((m) => `<div class="pl-line">💊 ${esc(m)}</div>`),
+      x && x.food ? `<div class="pl-line">🍽️ ${esc(x.food)}</div>` : '', x && x.where ? `<div class="pl-line">📍 ${esc(x.where)}</div>` : '', x && x.note ? `<div class="pl-line">📝 ${esc(x.note)}</div>` : ''].filter(Boolean);
+    if (lines.length) any = true;
+    rows.push(`<div class="pl-day"><div class="pl-head"><b>${esc(dayName(d))}</b>${isHelper() ? `<button type="button" class="link-btn" data-pl="ask|${d}">Ask</button>` : `<button type="button" class="link-btn" data-pl="edit|${d}">${x ? 'Edit' : 'Add'}${x && x.carers ? ' · carers see' : ''}</button>`}</div>${lines.join('') || '<div class="pl-line pl-none">Nothing planned</div>'}${isHelper() ? qaBlock(`day:${d}`) : ''}</div>`);
+  }
+  const firstAp = appts[0];
+  const sum = firstAp ? `Next: ${[firstAp.who, dayName(firstAp.date)].join(', ')}` : any ? 'Food and plans noted' : (isHelper() ? 'Nothing planned' : 'Add food, places and notes');
+  if (isHelper() && !any && !(pd.routine && Object.keys(pd.routine.variants || {}).length)) { box.innerHTML = ''; return; }
+  box.innerHTML = foldCard('plan', isHelper() ? 'Days ahead' : 'Days ahead', sum, `${rows.join('')}<div class="rt-foot">${isHelper() ? '<button type="button" class="link-btn" data-pl="note|">Leave a note for the parents</button>' : '<button type="button" class="link-btn" data-pl="appts|">Appointments</button> <button type="button" class="link-btn" data-pl="routines|">Routines</button>'}</div>`, false, 'rt-card');
+  box.onclick = (ev) => {
+    const b = ev.target.closest('[data-pl]'); if (!b) return; const [act, d] = b.dataset.pl.split('|');
+    if (act === 'edit') openDaySheet(d); else if (act === 'appts') openApptList(); else if (act === 'routines') openRoutineEditor();
+    else if (act === 'ask') openAskSheet({ kind: 'q', key: `day:${d}`, label: `About ${dayName(d)}` });
+    else if (act === 'note') openAskSheet({ kind: 'note', key: 'note', label: 'A general note' });
+  };
+}
+function openDaySheet(d) {
+  const h = home(); const x = h.days[d] && !h.days[d].removed ? h.days[d] : { food: '', where: '', note: '', carers: false };
+  openSheet(dayName(d), `
+    <div class="field"><label class="label" for="dy-food">Food</label><input class="input" id="dy-food" maxlength="300" placeholder="e.g. Pasta bake" value="${esc(x.food)}"></div>
+    <div class="field"><label class="label" for="dy-where">Where to find things</label><input class="input" id="dy-where" maxlength="300" placeholder="e.g. Dinner is in the fridge, second shelf" value="${esc(x.where)}"></div>
+    <div class="field"><label class="label" for="dy-note">Other notes</label><textarea class="input" id="dy-note" rows="2" maxlength="600">${esc(x.note)}</textarea></div>
+    <label class="check"><input type="checkbox" id="dy-carers"${x.carers ? ' checked' : ''}> Show carers this day (and its appointments marked for carers)</label>
+    <button type="button" class="btn dark block" data-act="dy-save">Save</button>${h.days[d] ? '<button type="button" class="btn ghost block" data-act="dy-clear">Clear this day</button>' : ''}`, { onMount: (b) => {
+    b.onclick = async (ev) => {
+      const a = ev.target.closest('[data-act]'); if (!a) return; const hh = home();
+      if (a.dataset.act === 'dy-save') hh.days[d] = { food: $('#dy-food', b).value, where: $('#dy-where', b).value, note: $('#dy-note', b).value, carers: $('#dy-carers', b).checked, removed: false, updatedAt: Date.now() };
+      else if (a.dataset.act === 'dy-clear') hh.days[d] = { ...hh.days[d], food: '', where: '', note: '', carers: false, removed: true, updatedAt: Date.now() };
+      else return; closeSheet(); await saveHome(hh); toast('Saved');
+    };
+  } });
+}
+
+// ---- appointments
+const apptWho = () => Array.from(new Set(Object.values(home().appts).filter((a) => !a.removed).map((a) => a.who))).sort();
+function apptLine(o) {
+  const a = o.appt; return `<button type="button" class="time-row appt-row" data-ap="open|${a.id}|${o.date}"><span><b>${esc(a.who)}${a.what ? `: ${esc(a.what)}` : ''}</b><small>${esc(dayName(o.date))}${o.time ? ` · ${esc(fmtTime(o.time))}` : ''}${a.place ? ` · ${esc(a.place)}` : ''}${a.repeat !== 'none' ? ` · ${esc(REPEATS[a.repeat].toLowerCase())}` : ''}${a.carers ? ' · carers see' : ''}</small></span></button>`;
+}
+export function renderApptCard() {
+  const box = $('#appt-card'); if (!box) return;
+  if (isHelper() || cardHidden('appt')) { box.innerHTML = ''; return; }
+  const h = home(); const t = today(); const now = nowHHMM();
+  const ups = upcoming(h.appts, t, now, 60); const fu = followUps(h.appts, t, now); const rem = reminders(h.appts, t).filter((o) => !fu.some((f) => f.key === o.key));
+  const sum = fu.length ? `How did it go? ${fu[0].appt.who}` : rem.length ? `${dayName(rem[0].date)}: ${rem[0].appt.who}${rem[0].time ? ` ${fmtTime(rem[0].time)}` : ''}` : ups.length ? `Next: ${ups[0].appt.who}, ${dayName(ups[0].date)}` : 'None coming up';
+  const body = `${fu.map((o) => `<div class="appt-follow"><b>How did ${esc(o.appt.who)}${o.appt.what ? ` (${esc(o.appt.what)})` : ''} go?</b><small>${esc(dayName(o.date))}</small><div class="chips"><button type="button" class="chip" data-ap="follow|${o.appt.id}|${o.date}">Add outcome</button><button type="button" class="chip" data-ap="skipf|${o.appt.id}|${o.date}">Didn't happen</button></div></div>`).join('')}
+    ${rem.map((o) => `<p class="outlook-tip"><b>${esc(dayName(o.date))}:</b> ${esc(o.appt.who)}${o.time ? ` at ${esc(fmtTime(o.time))}` : ''}${o.appt.place ? `, ${esc(o.appt.place)}` : ''}</p>`).join('')}
+    ${ups.length ? `<div class="act-list">${ups.slice(0, 6).map(apptLine).join('')}</div>` : '<p class="hint">Nothing coming up.</p>'}
+    <div class="rt-foot"><button type="button" class="link-btn" data-ap="add||">Add an appointment</button> <button type="button" class="link-btn" data-ap="all||">All and past</button></div>`;
+  box.innerHTML = foldCard('appt', 'Appointments', sum, body, fu.length > 0 || rem.length > 0, 'rt-card');
+  box.onclick = (ev) => {
+    const b = ev.target.closest('[data-ap]'); if (!b) return; const [act, id, d] = b.dataset.ap.split('|'); const a = home().appts[id];
+    if (act === 'add') openApptSheet('', {}); else if (act === 'all') openApptList(); else if (act === 'open' && a) openApptSheet(id, { date: d });
+    else if (act === 'follow' && a) openFollowUp(a, d); else if (act === 'skipf' && a) markApptDone(a, d, true);
+  };
+}
+async function markApptDone(a, d, skip) { const h = home(); const x = h.appts[a.id]; x.done = { ...x.done, [d]: { at: Date.now(), skip: !!skip } }; x.updatedAt = Date.now(); await saveHome(h); }
+function openApptList() {
+  const h = home(); const t = today(); const all = Object.values(h.appts).filter((a) => !a.removed);
+  const past = []; all.forEach((a) => occurrences(a, a.date, t).forEach((o) => { if (o.date < t) past.push({ ...o, appt: a }); }));
+  past.sort((x, y) => (x.date < y.date ? 1 : -1));
+  const ups = upcoming(h.appts, t, nowHHMM(), 365);
+  openSheet('Appointments', `<button type="button" class="btn dark block" data-ap="add||">Add an appointment</button>
+    <h4 class="feel-sub">Coming up</h4>${ups.length ? `<div class="act-list">${ups.slice(0, 40).map(apptLine).join('')}</div>` : '<p class="hint">Nothing coming up.</p>'}
+    <h4 class="feel-sub">Past</h4>${past.length ? `<div class="act-list">${past.slice(0, 60).map((o) => `<button type="button" class="time-row appt-row" data-ap="open|${o.appt.id}|${o.date}"><span><b>${esc(o.appt.who)}${o.appt.what ? `: ${esc(o.appt.what)}` : ''}</b><small>${esc(fmtDayShort(o.date))}${(o.appt.done || {})[o.date] ? ((o.appt.done[o.date].skip) ? ' · didn\'t happen' : ' · outcome noted') : ''}</small></span></button>`).join('')}</div>` : '<p class="hint">Past appointments stay here so you can look back.</p>'}`, { onMount: (b) => {
+    b.onclick = (ev) => { const c = ev.target.closest('[data-ap]'); if (!c) return; const [act, id, d] = c.dataset.ap.split('|'); if (act === 'add') openApptSheet('', {}); else if (act === 'open') openApptSheet(id, { date: d }); };
+  } });
+}
+function openApptSheet(id, preset) {
+  const h = home(); const cur = id ? h.appts[id] : null;
+  const a = cur || { who: preset.who || '', what: preset.what || '', place: preset.place || '', date: preset.date || today(), time: preset.time || '', len: preset.len || 30, repeat: 'none', until: '', carers: false, remind: 'on', notes: '', skip: [], done: {} };
+  const opt = (v, l, sel) => `<option value="${v}"${sel ? ' selected' : ''}>${l}</option>`;
+  openSheet(cur ? 'Appointment' : 'New appointment', `
+    <div class="field"><label class="label" for="ap-who">Doctor or service</label><input class="input" id="ap-who" list="ap-whos" maxlength="60" placeholder="e.g. Dr Lee, Speech therapy" value="${esc(a.who)}"><datalist id="ap-whos">${apptWho().map((w) => `<option value="${esc(w)}">`).join('')}</datalist></div>
+    <div class="field"><label class="label" for="ap-what">What for (optional)</label><input class="input" id="ap-what" maxlength="80" placeholder="e.g. Iron retest" value="${esc(a.what)}"></div>
+    <div class="row2"><div class="field"><label class="label" for="ap-date">Date</label><input class="input" type="date" id="ap-date" value="${esc(a.date)}"></div><div class="field"><label class="label" for="ap-time">Time</label><input class="input" type="time" id="ap-time" value="${esc(a.time)}"></div></div>
+    <div class="field"><label class="label" for="ap-place">Where (optional)</label><input class="input" id="ap-place" maxlength="120" value="${esc(a.place)}"></div>
+    <div class="row2"><div class="field"><label class="label" for="ap-len">Length</label><select class="input" id="ap-len">${[15, 30, 45, 60, 90, 120].map((n) => opt(n, `${n} min`, +a.len === n)).join('')}</select></div>
+    <div class="field"><label class="label" for="ap-rep">Repeats</label><select class="input" id="ap-rep">${Object.entries(REPEATS).map(([k, l]) => opt(k, l, a.repeat === k)).join('')}</select></div></div>
+    <div class="field"><label class="label" for="ap-until">Repeat until (optional)</label><input class="input" type="date" id="ap-until" value="${esc(a.until)}"></div>
+    <div class="field"><label class="label" for="ap-rem">Reminder in the app</label><select class="input" id="ap-rem">${opt('on', 'Remind me the day before and on the day', a.remind === 'on')}${opt('off', 'No reminder', a.remind === 'off')}${opt('cal', 'It is in my calendar, no reminder needed', a.remind === 'cal')}</select></div>
+    <label class="check"><input type="checkbox" id="ap-carers"${a.carers ? ' checked' : ''}> Include in the carer plan</label>
+    <div class="field"><label class="label" for="ap-notes">Notes (optional)</label><textarea class="input" id="ap-notes" rows="2" maxlength="600">${esc(a.notes)}</textarea></div>
+    <button type="button" class="btn dark block" data-act="ap-save">Save</button>
+    ${cur ? `<button type="button" class="btn ghost block" data-act="ap-ics">Add to my calendar</button>${cur.repeat !== 'none' ? `<button type="button" class="btn ghost block" data-act="ap-skip">Skip ${esc(fmtDayShort(preset.date || cur.date))} only</button>` : ''}<button type="button" class="btn ghost block" data-act="ap-del">Delete</button>` : ''}`, { full: true, onMount: (b) => {
+    b.onclick = async (ev) => {
+      const c = ev.target.closest('[data-act]'); if (!c) return; const hh = home(); const aid = cur ? cur.id : Sync.randomId(8); const act = c.dataset.act;
+      if (act === 'ap-save') {
+        const who = $('#ap-who', b).value.trim(); const date = $('#ap-date', b).value; if (!who || !date) { toast('Add who it is with and a date'); return; }
+        hh.appts[aid] = { ...(cur || {}), id: aid, who, what: $('#ap-what', b).value, place: $('#ap-place', b).value, date, time: $('#ap-time', b).value, len: +$('#ap-len', b).value, repeat: $('#ap-rep', b).value, until: $('#ap-until', b).value, carers: $('#ap-carers', b).checked, remind: $('#ap-rem', b).value, notes: $('#ap-notes', b).value, skip: (cur && cur.skip) || [], done: (cur && cur.done) || {}, removed: false, updatedAt: Date.now() };
+        closeSheet(); await saveHome(hh); toast('Saved');
+      } else if (act === 'ap-del') { hh.appts[aid] = { ...cur, removed: true, updatedAt: Date.now() }; closeSheet(); await saveHome(hh); toast('Deleted'); }
+      else if (act === 'ap-skip') { const d = preset.date || cur.date; hh.appts[aid] = { ...cur, skip: [...(cur.skip || []), d], updatedAt: Date.now() }; closeSheet(); await saveHome(hh); toast('Skipped that one'); }
+      else if (act === 'ap-ics') { const ics = apptIcs(cur, Sync.randomId(12), today()); if (!ics) return; const ok = await shareFile(new Blob([ics], { type: 'text/calendar' }), `${cur.who.replace(/[^\w]+/g, '-').slice(0, 30)}.ics`, 'text/calendar'); if (ok) toast('Open the file to add it to your calendar.'); }
+    };
+  } });
+}
+function openFollowUp(a, d) {
+  openSheet(`How did ${a.who} go?`, `<p class="hint intro">${esc(fmtDayLong(d))}</p>
+    <div class="field"><label class="label" for="fu-out">How it went</label><textarea class="input" id="fu-out" rows="3" maxlength="600" placeholder="e.g. All fine, results next week"></textarea></div>
+    <div class="field"><label class="label" for="fu-next">Next steps (optional)</label><textarea class="input" id="fu-next" rows="2" maxlength="400" placeholder="e.g. Repeat test in 3 months"></textarea></div>
+    <button type="button" class="btn dark block" data-act="fu-save">Save to the log</button><button type="button" class="btn ghost block" data-act="fu-next">Save and add the next appointment</button>`, { onMount: (b) => {
+    b.onclick = async (ev) => {
+      const c = ev.target.closest('[data-act]'); if (!c) return; const out = $('#fu-out', b).value.trim(); const nx = $('#fu-next', b).value.trim();
+      if (!out && !nx) { toast('Add a line first'); return; }
+      const now = Date.now(); const time = a.time || nowHHMM();
+      await saveActivity({ id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, cat: 'health', title: `${a.who}${a.what ? `: ${a.what}` : ''}`.slice(0, 80), notes: [out && `How it went: ${out}`, nx && `Next steps: ${nx}`].filter(Boolean).join('\n'), sev: 0, src: 'parent', srcName: S.myName || 'Me', date: d, time, tod: todOf(time) });
+      await markApptDone(a, d, false); closeSheet(); toast('Saved to the log');
+      if (c.dataset.act === 'fu-next') openApptSheet('', { who: a.who, what: a.what, place: a.place, len: a.len, time: a.time });
+    };
+  } });
+}
+
+// ---- carer questions, for the parents
+export function renderAskCard() {
+  const box = $('#ask-card'); if (!box) return;
+  if (isHelper() || cardHidden('ask')) { box.innerHTML = ''; return; }
+  const h = home(); const list = askEntries().filter((e) => !(h.qa[e.id] && h.qa[e.id].resolved)).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  if (!list.length) { box.innerHTML = ''; return; }
+  const open = list.filter((e) => !(h.qa[e.id] && h.qa[e.id].a)).length;
+  box.innerHTML = foldCard('ask', 'Carer questions and notes', open ? `${open} to answer` : `${list.length} noted`, `<div class="act-list">${list.slice(0, 20).map((e) => { const q = h.qa[e.id]; return `<button type="button" class="time-row" data-ask="${e.id}"><span><b>${esc(e.text)}</b><small>${esc(e.by || 'Carer')} · ${esc(e.refLabel || (e.kind === 'note' ? 'Note' : 'Question'))}${q && q.a ? ` · answered` : ''}</small></span></button>`; }).join('')}</div>`, open > 0, 'rt-card');
+  box.onclick = (ev) => { const b = ev.target.closest('[data-ask]'); if (b) openAnswerSheet(b.dataset.ask); };
+}
+function openAnswerSheet(id) {
+  const e = S.entries.get(id); if (!e) return; const q = home().qa[id] || { a: '' };
+  openSheet(e.kind === 'note' ? 'Note from a carer' : 'Question from a carer', `<p class="hint intro">${esc(e.by || 'Carer')} · ${esc(e.refLabel || '')}</p><p><b>${esc(e.text)}</b></p>
+    <div class="field"><label class="label" for="an-text">${e.kind === 'note' ? 'Reply (optional)' : 'Your answer'}</label><textarea class="input" id="an-text" rows="3" maxlength="600">${esc(q.a)}</textarea></div>
+    <button type="button" class="btn dark block" data-act="an-save">Send reply</button><button type="button" class="btn ghost block" data-act="an-done">Mark as sorted and tidy away</button>`, { onMount: (b) => {
+    b.onclick = async (ev) => {
+      const c = ev.target.closest('[data-act]'); if (!c) return; const hh = home(); const text = $('#an-text', b).value.trim();
+      hh.qa[id] = { a: text, by: S.myName || '', at: Date.now(), resolved: c.dataset.act === 'an-done', updatedAt: Date.now() };
+      closeSheet(); await saveHome(hh); toast(c.dataset.act === 'an-done' ? 'Tidied away' : 'Reply sent');
+    };
+  } });
+}
+function renderHomeCards() { renderRoutineCard(); renderPlanCard(); renderApptCard(); renderAskCard(); }
+
+// What a given carer receives: only what is opted in, plus answers to their own questions and the parents' ticks.
+function buildCarerPayload(helperId) {
+  const t = today(); const h = home();
+  const meds = Object.entries(cleanPlans(S.profile.meds)).filter(([, p]) => p.carers && !p.removed && activeOn(p, t)).map(([id, p]) => ({ ...p, id }));
+  const view = carerView(h, t, nowHHMM(), meds);
+  const qa = {}; S.entries.forEach((e) => { if (e && e.cat === 'ask' && !e.deleted && e.member === helperId && h.qa[e.id]) qa[e.id] = { a: h.qa[e.id].a, resolved: h.qa[e.id].resolved }; });
+  const y = addDays(t, -1); const ticks = [];
+  S.entries.forEach((e) => { if (e && e.cat === 'tick' && !e.deleted && !e.member && (e.date === t || e.date === y)) ticks.push({ date: e.date, stepId: e.stepId, at: e.at, skip: !!e.skip, by: e.by || '' }); });
+  ticks.sort((a, b) => (a.date + a.stepId < b.date + b.stepId ? -1 : 1));
+  return { ...view, qa, ticks, child: S.profile.childName || '' };
+}
+// How the routine is going: evenings with every step done, and bedtimes against the routine's last step.
+function routineInsightHTML() {
+  if (isHelper()) return ''; const h = home(); if (!Object.values(h.routine.variants).some((v) => !v.removed)) return '';
+  const t = today(); const byDate = {}; for (let i = 1; i <= 7; i++) byDate[addDays(t, -i)] = ticksFor(addDays(t, -i));
+  const w = routineWeek(h.routine, byDate, t);
+  const nights = sleepNights(live()).filter((n) => n.date >= addDays(t, -7) && n.date < t); let onTime = 0; let counted = 0;
+  nights.forEach((n) => { const v = variantFor(h.routine, n.date); if (!v || !v.steps.length) return; const target = hmMin(v.steps[v.steps.length - 1].time); const bed = hmMin(n.bed); counted++; if (bed >= 720 && bed <= target + 15) onTime++; });
+  if (!w.nights && !counted) return '';
+  return `<div class="card"><h3 class="card-title">Bedtime routine this week</h3>
+    ${w.nights ? `<div class="kv"><span>Checklist used</span><span>${w.nights} evening${w.nights === 1 ? '' : 's'}, every step on ${w.full}</span></div>` : ''}
+    ${counted ? `<div class="kv"><span>Asleep by the routine's last step</span><span>${onTime} of ${counted} night${counted === 1 ? '' : 's'}</span></div>` : ''}
+    <p class="hint">Just a picture of the week. Plans change, and a late night now and then is normal.</p></div>`;
+}
+
 // ---------------------------------------------------------------- one timer card
 // Active play, outdoors and screen time (synced entries) and your own care time (private to this phone) share one card.
 const runElapsed = (r) => r.acc + (r.paused ? 0 : Math.max(0, Date.now() - r.resumedAt));
@@ -916,6 +1229,7 @@ function showMain(opts = {}) {
   renderMedsCard();
   renderOutlook();
   renderTimerCard();
+  renderHomeCards();
   mountLogForm();
   switchTab(S.tab);
   updateSyncPill();
@@ -945,7 +1259,7 @@ function renderTab() {
   else if (S.tab === 'export') renderExport();
   else if (S.tab === 'time') renderTime();
 }
-function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderActivityCard(); renderScreenCard(); renderTallyCard(); renderMedsCard(); renderOutlook(); renderTimerCard(); }
+function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderActivityCard(); renderScreenCard(); renderTallyCard(); renderMedsCard(); renderOutlook(); renderTimerCard(); renderHomeCards(); }
 
 // ---------------------------------------------------------------- entry form
 // ---- people (shared): partner, carers, family. Stored in the shared profile so every phone sees the same list.
@@ -2305,7 +2619,7 @@ function renderInsights() {
   const all = live();
   const list = S.insightRange === 'all' ? all : rangeFilter(all, addDays(today(), -(+S.insightRange - 1)), today());
   const box = $('#insights');
-  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + activityInsightHTML() + screenInsightHTML() + momentsInsightHTML() + tallyInsightHTML() + medsInsightHTML() + dayFeelCardHTML(all) + growthCardHTML(all) + labCardHTML(all);
+  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + activityInsightHTML() + screenInsightHTML() + momentsInsightHTML() + tallyInsightHTML() + routineInsightHTML() + medsInsightHTML() + dayFeelCardHTML(all) + growthCardHTML(all) + labCardHTML(all);
   box.onclick = (ev) => {
     const cd = ev.target.closest('[data-check-day]'); if (cd) { openDayCheck(cd.dataset.checkDay); return; }
     const sh = ev.target.closest('[data-night]');
@@ -2549,7 +2863,7 @@ function scheduleSync(delay = 1200) {
   if (!syncing) setSyncStatus('pending');
   syncTimer = setTimeout(runSync, delay);
 }
-async function runSync() {
+export async function runSync() {
   if (!syncOn()) { setSyncStatus('off'); return null; }
   if (syncing) { syncAgain = true; return null; }
   clearTimeout(syncTimer);
@@ -2561,6 +2875,7 @@ async function runSync() {
         getState: () => kvGet('syncState'),
         setState: (s) => kvSet('syncState', s),
         merge: mergeOwn,
+        plan: async (d) => { S.plan = d; await kvSet('plan', d); if ($('#app').dataset.screen === 'main') renderHomeCards(); },
         snapshot: () => ({ name: S.myName || '', entries: Array.from(S.entries.values()) }),
       });
     } else {
@@ -2593,7 +2908,7 @@ function cleanFamily(f) {
   Object.keys(f.members && typeof f.members === 'object' ? f.members : {}).sort().forEach((id) => {
     const m = f.members[id];
     if (!ID_RE.test(id) || !m || typeof m !== 'object') return;
-    members[id] = { name: String(m.name || '').slice(0, 40), key: m.removed ? '' : String(m.key || ''), createdAt: +m.createdAt || 0, updatedAt: +m.updatedAt || 0, removed: !!m.removed };
+    members[id] = { name: String(m.name || '').slice(0, 40), plan: !!m.plan, key: m.removed ? '' : String(m.key || ''), createdAt: +m.createdAt || 0, updatedAt: +m.updatedAt || 0, removed: !!m.removed };
   });
   return { repo: Sync.normaliseRepo(f.repo) || '', token: String(f.token || ''), updatedAt: +f.updatedAt || 0, members };
 }
@@ -2617,7 +2932,7 @@ async function mergeHelper(id, p) {
   let changed = 0; let n = 0; const put = [];
   for (const r of Array.isArray(p.entries) ? p.entries : []) {
     if (!r || typeof r.id !== 'string' || !ID_RE.test(r.id)) continue;
-    if (!r.deleted && !(CAT[r.cat] && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || '')))) continue;
+    if (!r.deleted && !((CAT[r.cat] || r.cat === 'tick' || r.cat === 'ask') && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || '')))) continue;
     if (!r.deleted) n++;
     const l = S.entries.get(r.id);
     if (l && l.member !== id) continue;
@@ -2633,9 +2948,9 @@ async function mergeHelper(id, p) {
   S.famSeen[id] = { at: +p.at || 0, n };
   return changed;
 }
-async function pullFamily() {
+export async function pullFamily() {
   const f = S.profile.family;
-  const helpers = f && f.repo && f.token ? familyMembers(false).filter(([, m]) => m.key).map(([id, m]) => ({ id, key: m.key })) : [];
+  const helpers = f && f.repo && f.token ? familyMembers(false).filter(([, m]) => m.key).map(([id, m]) => ({ id, key: m.key, plan: !!m.plan })) : [];
   if (!helpers.length) { S.famErr = null; return; }
   try {
     const r = await Sync.pullHelpers({ repo: f.repo, token: f.token, helpers }, {
@@ -2643,6 +2958,7 @@ async function pullFamily() {
     });
     S.famErr = r.problems.length ? { code: 'unreadable', ids: r.problems } : null;
     await kvSet('famSeen', S.famSeen);
+    try { await Sync.pushPlans({ repo: f.repo, token: f.token, helpers }, { getState: () => kvGet('planState'), setState: (x) => kvSet('planState', x), build: buildCarerPayload }); } catch (e) { console.warn('plan share', e); }
     if (r.pulled && $('#app').dataset.screen === 'main') renderDependent();
   } catch (e) { console.warn('family', e); S.famErr = e; }
 }
@@ -2672,11 +2988,12 @@ async function mergeRemote(payloads) {
       if (!l || newer(r, l)) { S.entries.set(r.id, r); put.push(r); changed++; }
     }
     if (p.profile && (p.profile.updatedAt || 0) > (S.profile.updatedAt || 0)) {
-      const fam = S.profile.family; const ppl = S.profile.people; const mds = S.profile.meds;
+      const fam = S.profile.family; const ppl = S.profile.people; const mds = S.profile.meds; const hm = S.profile.home;
       S.profile = { childName: String(p.profile.childName || ''), updatedAt: p.profile.updatedAt };
       if (fam) S.profile.family = fam;
       if (ppl) S.profile.people = ppl;
       if (mds) S.profile.meds = mds;
+      if (hm) S.profile.home = hm;
       if (['3-5', '5-13', 'off'].includes(p.profile.sleepGuide)) S.profile.sleepGuide = p.profile.sleepGuide;
       if (AGE_GROUPS[p.profile.nrvAge]) S.profile.nrvAge = p.profile.nrvAge;
       if (p.profile.childSex === 'girl' || p.profile.childSex === 'boy') S.profile.childSex = p.profile.childSex;
@@ -2686,6 +3003,10 @@ async function mergeRemote(payloads) {
     if (p.profile && p.profile.meds && !isHelper()) {
       const mm = mergePlans(S.profile.meds, p.profile.meds);
       if (JSON.stringify(mm) !== JSON.stringify(cleanPlans(S.profile.meds))) { S.profile = { ...S.profile, meds: mm }; await kvSet('profile', S.profile); changed++; }
+    }
+    if (p.profile && p.profile.home && !isHelper()) {
+      const mh = mergeHome(S.profile.home, p.profile.home);
+      if (JSON.stringify(mh) !== JSON.stringify(cleanHome(S.profile.home))) { S.profile = { ...S.profile, home: mh }; await kvSet('profile', S.profile); changed++; }
     }
     if (p.profile && p.profile.people && !isHelper()) {
       const mp = mergePeople(S.profile.people, p.profile.people);
@@ -2913,6 +3234,7 @@ async function openSettings() {
         <div class="track-list">${TRACK_CARDS.map(([k, l]) => `<label class="check"><input type="checkbox" data-trackcard="${k}"${cardHidden(k) ? '' : ' checked'}> ${esc(l)}</label>`).join('')}
         <label class="check"><input type="checkbox" data-trackopen="1"${S.track.openCards ? ' checked' : ''}> Keep the cards on the Log tab open</label></div>
         <span class="label mt10">Log form areas</span><div class="track-list">${CATS.map((c) => `<label class="check"><input type="checkbox" data-trackcat="${c.k}"${S.track.hideCats.includes(c.k) ? '' : ' checked'}> ${c.em} ${esc(c.label)}</label>`).join('')}</div></div>
+      <div class="field"><span class="label">Routine, plan and appointments</span><div class="btn-stack"><button type="button" class="btn ghost" data-act="open-routines">Bedtime routines</button><button type="button" class="btn ghost" data-act="open-appts">Appointments</button></div></div>
       <div class="field"><label class="label" for="st-outlook">Today's outlook on the Log tab</label><select class="select" id="st-outlook">
         <option value="on"${S.outlook && S.outlook.off ? '' : ' selected'}>Show it when something stands out</option>
         <option value="off"${S.outlook && S.outlook.off ? ' selected' : ''}>Don't show it</option>
@@ -2967,6 +3289,10 @@ async function openSettings() {
       b.onchange = async (ev) => {
         if (ev.target.id === 'st-nrv') { S.profile = { ...S.profile, nrvAge: ev.target.value, updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(); toast('Saved'); }
         const tgt = ev.target;
+        if (tgt.dataset && tgt.dataset.famPlan) {
+          const f0 = cleanFamily(S.profile.family); const m0 = f0 && f0.members[tgt.dataset.famPlan]; if (m0) { m0.plan = tgt.checked; m0.updatedAt = Date.now(); f0.updatedAt = Date.now(); await saveFamily(f0); toast(tgt.checked ? 'Sharing the routine and plan' : 'Stopped sharing'); }
+          return;
+        }
         if (tgt.dataset && (tgt.dataset.trackcard || tgt.dataset.trackcat || tgt.dataset.trackopen)) {
           const set = (arr, k, on) => (on ? arr.filter((x) => x !== k) : arr.includes(k) ? arr : [...arr, k]);
           if (tgt.dataset.trackcard) S.track.hide = set(S.track.hide, tgt.dataset.trackcard, tgt.checked);
@@ -3002,6 +3328,8 @@ async function openSettings() {
         else if (a === 'st-backup') openBackup();
         else if (a === 'st-restore') openRestore();
         else if (a === 'med-manage') openMedManage();
+        else if (a === 'open-routines') openRoutineEditor();
+        else if (a === 'open-appts') openApptList();
         else if (a === 'fb-open') openFeedback();
         else if (a === 'fb-list') openFeedbackList();
         else if (a === 'ppl-add') openPersonSheet(null, btn.dataset.name || '');
@@ -3534,6 +3862,7 @@ function openMedSheet(id) {
     <div class="field"><span class="label">Times each day</span><div class="row2 time-grid">${timeInputs}</div><p class="hint">Leave all blank for "as needed".</p></div>
     <div class="field"><span class="label">Days</span><div class="chips" data-mdays>${[1, 2, 3, 4, 5, 6, 0].map((d) => `<button type="button" class="chip" data-mday="${d}" aria-pressed="${days.includes(d)}">${DAY_NAMES[d]}</button>`).join('')}</div><p class="hint">Leave all unselected for every day.</p></div>
     <div class="field"><label class="label" for="mp-start">Started on</label><input class="input" type="date" id="mp-start" max="${today()}" value="${esc(cur ? cur.start : today())}"></div>
+    <label class="check"><input type="checkbox" id="mp-carers"${cur && cur.carers ? ' checked' : ''}> Show carers this medicine and its times (family members you share the plan with)</label>
     <div class="field"><label class="label" for="mp-retest">Check or retest on (optional)</label><div class="row2"><input class="input" type="date" id="mp-retest" min="${today()}" value="${esc(cur ? cur.retest : '')}" aria-label="Retest date"><input class="input" id="mp-retestl" maxlength="40" autocomplete="off" placeholder="e.g. Iron retest" value="${esc(cur ? cur.retestLabel : '')}" aria-label="What it is for"></div><p class="hint">Shows a gentle countdown and a daily encouragement on the Medicines card.</p>${cur && cur.retest && cur.times.length ? '<button type="button" class="btn ghost block" data-act="mp-ics">Add a daily reminder to my calendar</button>' : ''}</div>
     <div class="field"><label class="label" for="mp-notes">Notes (optional)</label><input class="input" id="mp-notes" maxlength="200" autocomplete="off" placeholder="e.g. with food" value="${esc(cur ? cur.notes : '')}"></div>
     <div id="mp-msg" hidden></div>
@@ -3558,7 +3887,7 @@ function openMedSheet(id) {
         if (!name) return showMsg($('#mp-msg', b), 'warn', 'Add the medicine name.');
         const times = [0, 1, 2, 3].map((i) => $(`#mp-t${i}`, b).value).filter(Boolean);
         const start = $('#mp-start', b).value || today();
-        const next = { ...(cur || {}), name, dose, times, days, notes: $('#mp-notes', b).value.trim(), start, retest: $('#mp-retest', b).value || '', retestLabel: $('#mp-retestl', b).value.trim().slice(0, 40), end: cur ? cur.end : '', history: cur ? cur.history.slice() : [], removed: false, updatedAt: Date.now() };
+        const next = { ...(cur || {}), name, dose, times, days, notes: $('#mp-notes', b).value.trim(), start, carers: $('#mp-carers', b).checked, retest: $('#mp-retest', b).value || '', retestLabel: $('#mp-retestl', b).value.trim().slice(0, 40), end: cur ? cur.end : '', history: cur ? cur.history.slice() : [], removed: false, updatedAt: Date.now() };
         if (cur && dose && dose !== cur.dose) { const cd = $('#mp-changed', b).value || today(); next.history.push({ date: cd > today() ? today() : cd, dose }); }
         all[id || Sync.randomId(9)] = next; await savePlans(all); done(); toast(cur && dose !== cur.dose ? 'Saved. Dose change marked.' : 'Saved');
       };
@@ -3668,11 +3997,11 @@ function familySectionHTML() {
     ${err ? `<div class="notice ${err.code === 'offline' ? 'warn' : 'err'}">${errText}</div>` : ''}
     ${list.length ? `<div class="card kv-card">${list.map(([id, m]) => {
       const seen = S.famSeen[id];
-      return `<div class="kv helper-row"><span><b>${esc(m.name)}</b><small>${seen && seen.at ? `Last synced ${esc(ago(seen.at))} · ${seen.n} entr${seen.n === 1 ? 'y' : 'ies'}` : 'Not joined yet'}</small></span>
+      return `<div class="kv helper-row"><span><b>${esc(m.name)}</b><small>${seen && seen.at ? `Last synced ${esc(ago(seen.at))} · ${seen.n} entr${seen.n === 1 ? 'y' : 'ies'}` : 'Not joined yet'}</small><label class="check mini"><input type="checkbox" data-fam-plan="${esc(id)}"${m.plan ? ' checked' : ''}> Share the routine and plan with them</label></span>
         <span class="mini-links"><button type="button" data-fam-code="${esc(id)}">Code</button><button type="button" data-fam-remove="${esc(id)}">Remove</button></span></div>`;
     }).join('')}</div>` : '<p class="hint">No family members yet.</p>'}
     <div class="btn-stack"><button type="button" class="btn dark" data-act="fam-add">Add a family member</button><button type="button" class="btn ghost" data-act="fam-key">Update family storage key</button></div>
-    <p class="hint">Their entries appear in your log with their name. Family storage: ${esc(f.repo)}.</p>
+    <p class="hint">Their entries appear in your log with their name. Tick "Share the routine and plan" for someone you want to follow the routine, and they will see only the routines, days, appointments and medicines you have marked for carers. Family storage: ${esc(f.repo)}.</p>
   </div>`;
 }
 
@@ -3932,6 +4261,7 @@ async function init() {
   S.outlook = (await kvGet('outlook')) || {};
   S.role = (await kvGet('role')) === 'helper' ? 'helper' : 'parent';
   S.fam = (await kvGet('fam')) || null;
+  S.plan = (await kvGet('plan')) || null;
   S.famSeen = (await kvGet('famSeen')) || {};
   S.care = cleanCare(await kvGet('care'));
   S.me = cleanMe(await kvGet('me'));
@@ -3943,6 +4273,7 @@ async function init() {
 
   registerSW();
   setupFolds();
+  setInterval(() => { try { if (document.visibilityState === 'visible' && $('#app').dataset.screen === 'main' && S.tab === 'log') { renderRoutineCard(); renderApptCard(); } } catch (e) { /* ignore */ } }, 60000);
 
   document.addEventListener('click', (ev) => {
     const t = ev.target.closest('[data-act]'); if (!t) return;

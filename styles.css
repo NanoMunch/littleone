@@ -667,3 +667,24 @@ a.btn { text-decoration: none; }
 
 .med-goal { margin: 10px 0 2px; font-size: .9rem; line-height: 1.45; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--accent, #6b4f3a) 8%, transparent); }
 .med-goal small { display: block; color: var(--muted); margin-top: 2px; }
+
+/* 1.25.0: routine, days ahead, appointments */
+.rt-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rt-step { display: grid; grid-template-columns: 64px 1fr auto; gap: 8px; align-items: start; padding: 8px 10px; border-radius: 12px; border: 1px solid transparent; }
+.rt-step.done { opacity: .72; }
+.rt-step.skipped { opacity: .6; }
+.rt-step.missed { border: 1px dashed var(--muted); }
+.rt-time { font-size: .84rem; font-weight: 600; } .rt-time small { display: block; font-weight: 400; color: var(--muted); }
+.rt-text b { display: block; } .rt-text small { display: block; color: var(--muted); font-size: .82rem; line-height: 1.35; }
+.rt-tag { font-weight: 600; } .rt-done { color: var(--muted); } .rt-ans { margin-top: 2px; }
+.rt-btns { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; max-width: 124px; }
+.rt-here { display: flex; align-items: center; gap: 8px; font-size: .78rem; color: var(--muted); margin: 2px 0; }
+.rt-here::before, .rt-here::after { content: ''; flex: 1; border-top: 2px solid currentColor; opacity: .5; }
+.rt-foot { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 12px; }
+.rt-edit { display: grid; gap: 6px; padding: 10px 0; border-top: 1px solid var(--line, rgba(0,0,0,.12)); }
+.pl-day { padding: 8px 0; border-top: 1px solid var(--line, rgba(0,0,0,.1)); } .pl-day:first-child { border-top: 0; }
+.pl-head { display: flex; justify-content: space-between; align-items: center; }
+.pl-line { font-size: .9rem; line-height: 1.45; margin-top: 2px; } .pl-none { color: var(--muted); }
+.appt-follow { padding: 8px 10px; border-radius: 12px; background: color-mix(in srgb, var(--accent, #6b4f3a) 8%, transparent); margin-bottom: 8px; }
+.appt-follow small { display: block; color: var(--muted); }
+.check.mini { display: flex; font-size: .8rem; margin-top: 4px; gap: 6px; align-items: center; }

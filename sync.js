@@ -261,8 +261,9 @@ export async function syncOnce(cfg, hooks) {
 // - Each helper has their own random 256-bit key, made on a parent's phone and carried in their invite
 //   code. Their phone locks its entries with it and writes members/<helperId>/<deviceId>.json.
 // - Parents' phones keep every helper's key inside the parents' locked log, read the helpers' files, and
-//   copy the entries into the main log. Nothing from the main log is ever written to the family storage,
-//   so a helper can only ever read back what they logged themselves.
+//   copy the entries into the main log. The only thing written the other way is what the parents choose to
+//   share with a particular person (routine, plan, answers), locked with that person's own key in shared/<id>.json.
+//   Otherwise a helper can only ever read back what they logged themselves.
 
 export function newHelperKey() { return toB64(crypto.getRandomValues(new Uint8Array(32))); }
 
@@ -332,6 +333,17 @@ export async function syncHelper(cfg, hooks) {
     } catch (e) { if (e instanceof SyncError) throw e; /* a file this helper's key can't unlock: skip it */ }
   }
   const pulled = payloads.length ? await hooks.merge(payloads) : 0;
+  // What the parents chose to share with this person (routine, plan, answers), locked with this helper's own key.
+  let planSha = state.planSha || '';
+  if (hooks.plan) {
+    try {
+      const meta = await gh.getFileMeta(`shared/${cfg.helperId}.json`);
+      if (meta && meta.sha !== planSha) {
+        const data = await decryptJSON(key, JSON.parse(await gh.getBlobText(meta.sha)));
+        if (data && data.app === 'littleone-plan' && data.member === cfg.helperId) { await hooks.plan(data); planSha = meta.sha; }
+      }
+    } catch (e) { if (e instanceof SyncError) throw e; /* a plan file this key can't unlock: ignore */ }
+  }
   const snap = await hooks.snapshot();
   const entries = snap.entries.slice().sort((a, b) => (a.id < b.id ? -1 : 1));
   const hash = await sha256Hex(JSON.stringify({ n: snap.name, e: entries }));
@@ -345,7 +357,7 @@ export async function syncHelper(cfg, hooks) {
     }
     pushed = true;
   }
-  await hooks.setState({ shas: newShas, mySha, lastHash: hash, lastSyncAt: Date.now() });
+  await hooks.setState({ shas: newShas, mySha, lastHash: hash, planSha, lastSyncAt: Date.now() });
   return { pulled, pushed };
 }
 
@@ -374,6 +386,29 @@ export async function pullHelpers(cfg, hooks) {
   }
   await hooks.setState({ shas: newShas, bad, lastSyncAt: Date.now() });
   return { pulled, problems: Array.from(new Set(problems)) };
+}
+
+// Parent phones: write each opted-in helper a locked file with only what the parents chose to share.
+// hooks.build(helperId) returns that person's payload. Someone switched off gets an "empty" file once, so it clears.
+export async function pushPlans(cfg, hooks) {
+  const gh = new GitHubStore(cfg.repo, cfg.token);
+  const state = Object.assign({ hashes: {}, shas: {} }, (await hooks.getState()) || {});
+  for (const h of cfg.helpers) {
+    const payload = h.plan ? await hooks.build(h.id) : null;
+    const want = payload ? JSON.stringify(payload) : '';
+    if (!want && !state.shas[h.id]) continue;
+    const hash = await sha256Hex(want || 'empty');
+    if (state.hashes[h.id] === hash) continue;
+    let key; try { key = await importAesKey(fromB64(h.key)); } catch (e) { continue; }
+    const box = await encryptJSON(key, { app: 'littleone-plan', v: 1, member: h.id, at: Date.now(), empty: !payload, ...(payload || {}) });
+    const path = `shared/${h.id}.json`; let sha = state.shas[h.id] || null;
+    try { sha = await gh.writeJSON(path, box, sha, 'Plan'); } catch (e) {
+      if (e.code !== 'conflict') throw e;
+      const fresh = await gh.getFileMeta(path); sha = await gh.writeJSON(path, box, fresh ? fresh.sha : null, 'Plan');
+    }
+    state.hashes[h.id] = hash; state.shas[h.id] = sha;
+  }
+  await hooks.setState(state);
 }
 
 // ---------- backup files ----------

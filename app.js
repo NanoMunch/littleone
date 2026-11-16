@@ -10,7 +10,7 @@ import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.25.0';
+export const APP_VERSION = '1.26.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -275,7 +275,7 @@ const S = {
   entries: new Map(),
   deviceId: '', myName: '', profile: { childName: '', updatedAt: 0 },
   sync: null, members: {}, lastSyncAt: 0, syncStatus: 'off', syncError: null,
-  tab: 'log',
+  tab: 'today',
   hist: { cat: 'all', q: '', limit: 60, days: 1, open: new Set(), groups: new Map() },
   insightRange: '30',
   exp: null, lastPdf: null, pdfUrl: null,
@@ -287,7 +287,7 @@ const S = {
   track: loadTrack(), fold: {}, plan: null,
 };
 // What this phone shows. Only a display choice on this phone (localStorage), never synced.
-const TRACK_CARDS = [['dayfeel', 'How did today feel?'], ['activity', 'Outdoors and active play'], ['screen', 'Screen time'], ['tally', 'Quick taps'], ['meds', 'Medicines today'], ['routine', "Tonight's routine"], ['plan', 'Days ahead'], ['appt', 'Appointments'], ['ask', 'Carer questions'], ['timer', 'Timers']];
+const TRACK_CARDS = [['dayfeel', 'How did today feel?'], ['activity', 'Outdoors and active play'], ['screen', 'Screen time'], ['tally', 'Quick taps'], ['meds', 'Medicines today'], ['routine', "Tonight's routine"], ['plan', 'Days ahead'], ['appt', 'Appointments'], ['ask', 'Carer questions'], ['setup', 'Getting set up list'], ['timer', 'Timers']];
 function loadTrack() {
   try { const t = JSON.parse(localStorage.getItem('lo-track') || '{}') || {}; const arr = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string').slice(0, 40) : []); return { openCards: !!t.openCards, hide: arr(t.hide), hideCats: arr(t.hideCats), histAll: !!t.histAll }; }
   catch { return { openCards: false, hide: [], hideCats: [], histAll: false }; }
@@ -296,9 +296,9 @@ function saveTrack() { try { localStorage.setItem('lo-track', JSON.stringify(S.t
 const cardHidden = (k) => S.track.hide.includes(k);
 const foldOpen = (k, dflt) => (S.fold[k] !== undefined ? S.fold[k] : !!(S.track.openCards || dflt));
 // A card that shows one summary line and opens to its detail.
-function foldCard(key, title, summary, body, dflt, cls) {
+function foldCard(key, title, summary, body, dflt, cls, act) {
   const open = foldOpen(key, dflt);
-  return `<div class="card fold ${cls || ''}" data-fold="${key}"><button type="button" class="fold-head" data-foldtoggle="${key}" aria-expanded="${open}"><span class="fold-title">${esc(title)}</span><span class="fold-sum">${esc(summary || '')}</span><span class="fold-chev" aria-hidden="true"></span></button><div class="fold-body"${open ? '' : ' hidden'}>${body}</div></div>`;
+  return `<div class="card fold ${cls || ''}" data-fold="${key}"><div class="fold-top"><button type="button" class="fold-head" data-foldtoggle="${key}" aria-expanded="${open}"><span class="fold-title">${esc(title)}</span><span class="fold-sum">${esc(summary || '')}</span><span class="fold-chev" aria-hidden="true"></span></button>${act ? `<button type="button" class="chip fold-act" ${act.attr}>${esc(act.label)}</button>` : ''}</div><div class="fold-body"${open ? '' : ' hidden'}>${body}</div></div>`;
 }
 function setupFolds() {
   document.addEventListener('click', (ev) => {
@@ -411,7 +411,7 @@ function renderDayCard() {
     <details class="feel-more"${S.feelOpen ? ' open' : ''}><summary>What did today look like?${myTags.size ? ` <span class="n">${myTags.size} picked</span>` : ''}</summary>
       <p class="hint">Optional taps. Over time these show what goes with calmer days.</p>
       <div class="chips" role="group" aria-label="What today looked like">${DAYTAGS_UI.map((t) => `<button type="button" class="chip" data-daytag="${t.k}" aria-pressed="${myTags.has(t.k)}">${t.em} ${esc(t.label)}</button>`).join('')}</div>
-      ${otherTags.length ? `<p class="hint">Also added: ${otherTags.map((k) => esc(TAG[k].label)).join(', ')}.</p>` : ''}</details>`, false, 'feel-card');
+      ${otherTags.length ? `<p class="hint">Also added: ${otherTags.map((k) => esc(TAG[k].label)).join(', ')}.</p>` : ''}</details>`, !mineToday, 'feel-card');
   box.onclick = async (ev) => {
     const b = ev.target.closest('[data-feel]');
     if (b) { await setDayFeel(b.dataset.date, +b.dataset.feel); renderDayCard(); renderOutlook(); if (S.tab === 'insights') renderInsights(); return; }
@@ -480,7 +480,7 @@ export function renderActivityCard() {
   box.innerHTML = foldCard('activity', 'Outdoors and active play', sum, `${targets}
     ${nudge ? `<p class="outlook-tip"><b>Might help:</b> ${esc(nudge)}</p>` : ''}
     ${quick('outdoors')}${quick('play')}${rows ? `<div class="act-list">${rows}</div>` : ''}
-    <p class="hint">${tg ? `Based on the Australian 24-hour movement guidelines for ${esc(tg.label)}. ` : ''}Shared with everyone using this log. Time it from the timer card above. <button type="button" class="link-btn" data-actother="outdoors" data-actday="1">Add for another day</button></p>`, false, 'act-card');
+    <p class="hint">${tg ? `Based on the Australian 24-hour movement guidelines for ${esc(tg.label)}. ` : ''}Shared with everyone using this log. Time it from the timer card above. <button type="button" class="chip" data-actother="outdoors" data-actday="1">Add for another day</button></p>`, false, 'act-card', { label: '+30 outdoors', attr: 'data-actq="outdoors:30"' });
   applySizes(box);
   box.onclick = async (ev) => {
     const b = ev.target.closest('button'); if (!b) return;
@@ -502,7 +502,7 @@ export function renderTallyCard() {
   const st = tallyStats(tallyEntries(), today());
   const sum = st.whine.today || st.notlove.today ? [st.whine.today ? `${st.whine.today} whining` : '', st.notlove.today ? `${st.notlove.today} tough words` : ''].filter(Boolean).join(' · ') : 'Tap to count';
   box.innerHTML = foldCard('tally', 'Quick taps', sum, `<div class="act-row tally-row">${Object.entries(TALLY).map(([k, v]) => `<button type="button" class="chip tally-btn" data-tally="${k}"><span aria-hidden="true">${v.em}</span> ${esc(v.label)} <b>${st[k].today || ''}</b></button>`).join('')}</div>
-    <p class="hint">One tap each time it happens. Only counts, with a gentle pattern in Insights. Shared with everyone using this log.</p>`, false, 'act-card');
+    <p class="hint">One tap each time it happens. Only counts, with a gentle pattern in Insights. Shared with everyone using this log.</p>`, true, 'act-card');
   box.onclick = async (ev) => {
     const b = ev.target.closest('[data-tally]'); if (!b) return; const k = b.dataset.tally; const now = Date.now();
     const e = { id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, cat: 'tally', kind: k, title: '', notes: '', sev: 0, src: 'parent', srcName: S.myName || 'Me', date: today(), time: nowHHMM(), tod: todOf(nowHHMM()) };
@@ -523,6 +523,46 @@ function momentsInsightHTML() {
   if (isHelper()) return '';
   return momentCards(live(), today()).map((c) => `<div class="card"><h3 class="card-title">${esc(c.title)}</h3><p class="hint">${c.facts.map(esc).join(' ')}</p>${c.tips.length ? `<p class="outlook-tip"><b>Might help:</b> ${c.tips.map(esc).join(' ')}</p>` : ''}</div>`).join('');
 }
+
+// ---------------------------------------------------------------- Today tab: what needs attention, set-up list, quick links, order
+S.attn = {};
+function setAttn(k, v) { S.attn[k] = !!v; const d = $('#today-dot'); if (d) d.hidden = !Object.values(S.attn).some(Boolean); }
+const TODAY_EVENING = ['outlook-card', 'timer-card', 'routine-card', 'ask-card', 'meds-card', 'appt-card', 'plan-card', 'dayfeel-card', 'activity-card', 'screen-card', 'tally-card', 'setup-card', 'today-links'];
+const TODAY_DAY = ['outlook-card', 'meds-card', 'appt-card', 'ask-card', 'timer-card', 'activity-card', 'screen-card', 'tally-card', 'dayfeel-card', 'routine-card', 'plan-card', 'setup-card', 'today-links'];
+async function openPeople() { await openSettings(); setTimeout(() => { const el = $('[data-act="fam-add"]') || $('[data-act="fam-setup"]'); if (el) el.scrollIntoView({ block: 'center' }); }, 50); }
+export function renderToday() {
+  const panel = $('#tab-today'); if (!panel) return;
+  const hr = new Date().getHours(); const order = hr >= 16 || hr < 5 ? TODAY_EVENING : TODAY_DAY;
+  const cur = Array.from(panel.children).map((c) => c.id).join();
+  if (cur !== order.join()) order.forEach((id) => { const el = document.getElementById(id); if (el) panel.appendChild(el); });
+  renderSetupCard();
+  const links = $('#today-links');
+  if (links) {
+    links.innerHTML = isHelper() ? '' : `<button type="button" class="btn ghost" data-tl="people">People and carers<small>Invite family and choose what carers can see</small></button>
+      <button type="button" class="btn ghost" data-tl="export">Share or export a report<small>A PDF or summary for a clinician, or to keep</small></button>
+      <button type="button" class="btn ghost" data-tl="settings">Settings and backup<small>Child details, what to show, backup and restore</small></button>`;
+    links.onclick = (ev) => { const b = ev.target.closest('[data-tl]'); if (!b) return; const k = b.dataset.tl; if (k === 'people') openPeople(); else if (k === 'export') switchTab('export'); else openSettings(); };
+  }
+}
+function renderSetupCard() {
+  const box = $('#setup-card'); if (!box) return;
+  if (isHelper() || cardHidden('setup')) { box.innerHTML = ''; return; }
+  const h = home(); const items = [];
+  if (!S.profile.childName) items.push(['name', "Add your child's name and birth date", 'It tailors the guidance to their age.', 'Open settings']);
+  if (!Object.values(h.routine.variants).some((v) => !v.removed)) items.push(['routine', 'Add a bedtime routine', 'A checklist anyone can follow, with notes on where things are.', 'Add']);
+  if (!Object.keys(medPlans()).length) items.push(['meds', 'Add a medicine or supplement', 'Daily reminders and how it relates to the day.', 'Add']);
+  if (!Object.values(h.appts).some((a) => !a.removed)) items.push(['appt', 'Add an appointment', 'With reminders and a prompt for how it went.', 'Add']);
+  if (!familyMembers(false).length) items.push(['people', 'Invite a carer or family member', 'Choose what they can see.', 'Invite']);
+  if (!items.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="card setup-card"><h3 class="card-title">Getting set up</h3>${items.map(([k, t, d, b]) => `<div class="setup-item"><span><b>${esc(t)}</b><small>${esc(d)}</small></span><button type="button" class="chip" data-setup="${k}">${esc(b)}</button></div>`).join('')}
+    <div class="rt-foot"><button type="button" class="chip" data-setup="hide">Hide this list</button></div></div>`;
+  box.onclick = (ev) => {
+    const b = ev.target.closest('[data-setup]'); if (!b) return; const k = b.dataset.setup;
+    if (k === 'name') openSettings(); else if (k === 'routine') openRoutineEditor(); else if (k === 'meds') openMedManage(); else if (k === 'appt') openApptSheet('', {}); else if (k === 'people') openPeople();
+    else if (k === 'hide') { S.track.hide = Array.from(new Set([...S.track.hide, 'setup'])); saveTrack(); renderSetupCard(); toast('Hidden. You can bring it back in Settings, What I track.'); }
+  };
+}
+
 // ---------------------------------------------------------------- bedtime routine, days ahead, appointments, carer questions
 // Shared between parents (inside the profile). Carers only receive what is opted in, locked with their own key.
 const home = () => cleanHome(S.profile && S.profile.home);
@@ -569,6 +609,7 @@ function qaBlock(refKey) {
 export function renderRoutineCard() {
   const box = $('#routine-card'); if (!box) return;
   const routine = isHelper() ? (planData() && planData().routine) : home().routine;
+  setAttn('routine', false);
   if (!routine || cardHidden('routine')) { box.innerHTML = ''; return; }
   const t = today(); const v = variantFor(routine, t);
   if (!v || !v.steps.length) { box.innerHTML = ''; return; }
@@ -585,7 +626,8 @@ export function renderRoutineCard() {
       <span class="rt-btns">${i.state === 'open' ? `<button type="button" class="chip" data-rt="done|${s.id}">Done</button><button type="button" class="chip" data-rt="skip|${s.id}">Skip</button>` : `<button type="button" class="chip" data-rt="clear|${s.id}">Undo</button>`}${isHelper() ? `<button type="button" class="chip" data-rt="ask|${s.id}">Ask</button>` : ''}</span></li>`;
   }).join('') + (st.here >= st.items.length ? `<li class="rt-here" aria-label="Now"><span>Now ${esc(fmtTime(now))}</span></li>` : '');
   box.innerHTML = foldCard('routine', `Tonight's routine${v.name && v.name !== 'Routine' ? ` · ${v.name}` : ''}`, sum, `<ol class="rt-list">${rows}</ol>
-    <div class="rt-foot">${isHelper() ? '' : '<button type="button" class="link-btn" data-rt="tonight|">Different routine tonight</button> <button type="button" class="link-btn" data-rt="edit|">Edit routines</button>'}</div>`, inWindow, 'rt-card');
+    <div class="rt-foot">${isHelper() ? '' : '<button type="button" class="chip" data-rt="tonight|">Different routine tonight</button> <button type="button" class="chip" data-rt="edit|">Edit routines</button>'}</div>`, inWindow, 'rt-card', nextOpen && !isHelper() ? { label: 'Done', attr: `data-rt="done|${nextOpen.step.id}" aria-label="Mark ${esc(nextOpen.step.text)} done"` } : nextOpen ? { label: 'Done', attr: `data-rt="done|${nextOpen.step.id}"` } : null);
+  setAttn('routine', inWindow && st.items.some((i) => i.missed));
   box.onclick = (ev) => {
     const b = ev.target.closest('[data-rt]'); if (!b) return; const [act, id] = b.dataset.rt.split('|'); const step = v.steps.find((x) => x.id === id);
     if (act === 'tonight') openTonightSheet(); else if (act === 'edit') openRoutineEditor();
@@ -682,7 +724,7 @@ export function renderPlanCard() {
   const firstAp = appts[0];
   const sum = firstAp ? `Next: ${[firstAp.who, dayName(firstAp.date)].join(', ')}` : any ? 'Food and plans noted' : (isHelper() ? 'Nothing planned' : 'Add food, places and notes');
   if (isHelper() && !any && !(pd.routine && Object.keys(pd.routine.variants || {}).length)) { box.innerHTML = ''; return; }
-  box.innerHTML = foldCard('plan', isHelper() ? 'Days ahead' : 'Days ahead', sum, `${rows.join('')}<div class="rt-foot">${isHelper() ? '<button type="button" class="link-btn" data-pl="note|">Leave a note for the parents</button>' : '<button type="button" class="link-btn" data-pl="appts|">Appointments</button> <button type="button" class="link-btn" data-pl="routines|">Routines</button>'}</div>`, false, 'rt-card');
+  box.innerHTML = foldCard('plan', isHelper() ? 'Days ahead' : 'Days ahead', sum, `${rows.join('')}<div class="rt-foot">${isHelper() ? '<button type="button" class="chip" data-pl="note|">Leave a note for the parents</button>' : '<button type="button" class="chip" data-pl="appts|">Appointments</button> <button type="button" class="chip" data-pl="routines|">Routines</button>'}</div>`, false, 'rt-card');
   box.onclick = (ev) => {
     const b = ev.target.closest('[data-pl]'); if (!b) return; const [act, d] = b.dataset.pl.split('|');
     if (act === 'edit') openDaySheet(d); else if (act === 'appts') openApptList(); else if (act === 'routines') openRoutineEditor();
@@ -714,6 +756,7 @@ function apptLine(o) {
 }
 export function renderApptCard() {
   const box = $('#appt-card'); if (!box) return;
+  setAttn('appt', false);
   if (isHelper() || cardHidden('appt')) { box.innerHTML = ''; return; }
   const h = home(); const t = today(); const now = nowHHMM();
   const ups = upcoming(h.appts, t, now, 60); const fu = followUps(h.appts, t, now); const rem = reminders(h.appts, t).filter((o) => !fu.some((f) => f.key === o.key));
@@ -721,8 +764,9 @@ export function renderApptCard() {
   const body = `${fu.map((o) => `<div class="appt-follow"><b>How did ${esc(o.appt.who)}${o.appt.what ? ` (${esc(o.appt.what)})` : ''} go?</b><small>${esc(dayName(o.date))}</small><div class="chips"><button type="button" class="chip" data-ap="follow|${o.appt.id}|${o.date}">Add outcome</button><button type="button" class="chip" data-ap="skipf|${o.appt.id}|${o.date}">Didn't happen</button></div></div>`).join('')}
     ${rem.map((o) => `<p class="outlook-tip"><b>${esc(dayName(o.date))}:</b> ${esc(o.appt.who)}${o.time ? ` at ${esc(fmtTime(o.time))}` : ''}${o.appt.place ? `, ${esc(o.appt.place)}` : ''}</p>`).join('')}
     ${ups.length ? `<div class="act-list">${ups.slice(0, 6).map(apptLine).join('')}</div>` : '<p class="hint">Nothing coming up.</p>'}
-    <div class="rt-foot"><button type="button" class="link-btn" data-ap="add||">Add an appointment</button> <button type="button" class="link-btn" data-ap="all||">All and past</button></div>`;
-  box.innerHTML = foldCard('appt', 'Appointments', sum, body, fu.length > 0 || rem.length > 0, 'rt-card');
+    <div class="rt-foot"><button type="button" class="chip" data-ap="add||">Add an appointment</button> <button type="button" class="chip" data-ap="all||">All and past</button></div>`;
+  box.innerHTML = foldCard('appt', 'Appointments', sum, body, fu.length > 0 || rem.length > 0, 'rt-card', fu.length ? { label: 'Add outcome', attr: `data-ap="follow|${fu[0].appt.id}|${fu[0].date}"` } : null);
+  setAttn('appt', fu.length > 0 || rem.some((o) => o.date === t));
   box.onclick = (ev) => {
     const b = ev.target.closest('[data-ap]'); if (!b) return; const [act, id, d] = b.dataset.ap.split('|'); const a = home().appts[id];
     if (act === 'add') openApptSheet('', {}); else if (act === 'all') openApptList(); else if (act === 'open' && a) openApptSheet(id, { date: d });
@@ -789,11 +833,13 @@ function openFollowUp(a, d) {
 // ---- carer questions, for the parents
 export function renderAskCard() {
   const box = $('#ask-card'); if (!box) return;
+  setAttn('ask', false);
   if (isHelper() || cardHidden('ask')) { box.innerHTML = ''; return; }
   const h = home(); const list = askEntries().filter((e) => !(h.qa[e.id] && h.qa[e.id].resolved)).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   if (!list.length) { box.innerHTML = ''; return; }
   const open = list.filter((e) => !(h.qa[e.id] && h.qa[e.id].a)).length;
   box.innerHTML = foldCard('ask', 'Carer questions and notes', open ? `${open} to answer` : `${list.length} noted`, `<div class="act-list">${list.slice(0, 20).map((e) => { const q = h.qa[e.id]; return `<button type="button" class="time-row" data-ask="${e.id}"><span><b>${esc(e.text)}</b><small>${esc(e.by || 'Carer')} · ${esc(e.refLabel || (e.kind === 'note' ? 'Note' : 'Question'))}${q && q.a ? ` · answered` : ''}</small></span></button>`; }).join('')}</div>`, open > 0, 'rt-card');
+  setAttn('ask', open > 0);
   box.onclick = (ev) => { const b = ev.target.closest('[data-ask]'); if (b) openAnswerSheet(b.dataset.ask); };
 }
 function openAnswerSheet(id) {
@@ -808,7 +854,7 @@ function openAnswerSheet(id) {
     };
   } });
 }
-function renderHomeCards() { renderRoutineCard(); renderPlanCard(); renderApptCard(); renderAskCard(); }
+function renderHomeCards() { renderRoutineCard(); renderPlanCard(); renderApptCard(); renderAskCard(); renderSetupCard(); }
 
 // What a given carer receives: only what is opted in, plus answers to their own questions and the parents' ticks.
 function buildCarerPayload(helperId) {
@@ -989,7 +1035,7 @@ export function renderScreenCard() {
   box.innerHTML = foldCard('screen', 'Screen time', sum, `${prog}
     <p class="outlook-tip scr-note"${note ? '' : ' hidden'}>${esc(note)}</p>
     ${quick}${rows ? `<div class="act-list">${rows}</div>` : ''}
-    <p class="hint">${tg && tg.screenMax ? `Based on the Australian 24-hour movement guidelines for ${esc(tg.label)}. ` : ''}Shared with everyone using this log. Time it from the timer card above. <button type="button" class="link-btn" data-scrother="1" data-scrday="1">Add for another day</button></p>`, false, 'act-card');
+    <p class="hint">${tg && tg.screenMax ? `Based on the Australian 24-hour movement guidelines for ${esc(tg.label)}. ` : ''}Shared with everyone using this log. Time it from the timer card above. <button type="button" class="chip" data-scrother="1" data-scrday="1">Add for another day</button></p>`, false, 'act-card');
   applySizes(box);
   const refresh = () => { renderScreenCard(); if (S.tab === 'insights') renderInsights(); };
   box.onclick = async (ev) => {
@@ -1133,7 +1179,7 @@ function renderOutlook() {
   box.innerHTML = `<div class="card outlook ${o.level}" role="region" aria-label="Today's outlook">
     <h3 class="card-title">${o.level === 'harder' ? 'Today may be a bit harder' : 'Worth knowing today'}</h3>
     <ul class="outlook-list">${o.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
-    ${o.tips.length ? `<details class="outlook-more"><summary>Might help</summary><p class="outlook-tip">${o.tips.map(esc).join(' ')}</p></details>` : ''}
+    ${o.tips.length ? `<p class="outlook-tip"><b>Might help:</b> ${esc(o.tips[0])}</p>${o.tips.length > 1 ? `<details class="outlook-more"><summary>More ideas</summary><p class="outlook-tip">${o.tips.slice(1).map(esc).join(' ')}</p></details>` : ''}` : ''}
     <p class="hint outlook-foot">Based only on what's been logged, so it can miss things. It isn't a prediction. <button type="button" class="link-btn" data-act="outlook-hide">Hide for today</button> · <button type="button" class="link-btn" data-act="outlook-off">Turn off</button></p></div>`;
   box.onclick = async (ev) => {
     const a = ev.target.closest('[data-act]'); if (!a) return;
@@ -1230,6 +1276,7 @@ function showMain(opts = {}) {
   renderOutlook();
   renderTimerCard();
   renderHomeCards();
+  renderToday();
   mountLogForm();
   switchTab(S.tab);
   updateSyncPill();
@@ -1243,7 +1290,7 @@ function renderHeader() {
 }
 
 function switchTab(tab) {
-  if (isHelper() && tab !== 'log' && tab !== 'history') tab = 'log';
+  if (isHelper() && tab !== 'today' && tab !== 'log' && tab !== 'history') tab = 'today';
   if (tab !== 'time') clearInterval(careTick);
   if (tab === 'history' && S.tab !== 'history') S.hist.days = S.track.histAll ? 100000 : 1;
   S.tab = tab;
@@ -1258,8 +1305,9 @@ function renderTab() {
   else if (S.tab === 'insights') renderInsights();
   else if (S.tab === 'export') renderExport();
   else if (S.tab === 'time') renderTime();
+  else if (S.tab === 'today') renderToday();
 }
-function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderActivityCard(); renderScreenCard(); renderTallyCard(); renderMedsCard(); renderOutlook(); renderTimerCard(); renderHomeCards(); }
+function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderActivityCard(); renderScreenCard(); renderTallyCard(); renderMedsCard(); renderOutlook(); renderTimerCard(); renderHomeCards(); renderToday(); }
 
 // ---------------------------------------------------------------- entry form
 // ---- people (shared): partner, carers, family. Stored in the shared profile so every phone sees the same list.
@@ -1837,7 +1885,7 @@ function settleClock(el) {
 }
 // Back in the app after a while: an untouched form moves to the current date and time.
 function refreshFormClock() {
-  if (S.tab === 'log' || !S.tab) renderOutlook();
+  if (S.tab === 'today' || !S.tab) renderOutlook();
   const el = $('#log-form'); const st = el && el._st;
   if (!st || st.mode !== 'new' || st.timeTouched || st.dateTouched) return;
   const df = $('[data-f="date"]', el);
@@ -3814,6 +3862,7 @@ async function setDose(planId, date, slot, status) {
 const nowMin = () => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); };
 export function renderMedsCard() {
   const box = $('#meds-card'); if (!box) return;
+  setAttn('meds', false);
   if (isHelper() || cardHidden('meds')) { box.innerHTML = ''; return; }
   const t = today(); const plans = medPlans(); const active = Object.fromEntries(Object.entries(plans).filter(([, p]) => activeOn(p, t)));
   if (!Object.keys(active).length) { box.innerHTML = ''; return; }
@@ -3831,6 +3880,7 @@ export function renderMedsCard() {
   box.innerHTML = foldCard('meds', 'Medicines today', msum, `${rowHTML}${prnHTML}${goalHTML}
     ${off ? '<p class="hint">A dose was missed. Noting how the day goes helps show whether it made a difference.</p>' : late ? '<p class="hint">A dose was given late today.</p>' : ''}
     <div class="act-btns mt10"><button type="button" class="chip" data-act="med-effect">Note an effect</button><button type="button" class="chip" data-act="med-manage">Manage medicines</button></div>`, rows.some((r) => r.overdue && r.status !== 'taken' && r.status !== 'late'), 'act-card');
+  setAttn('meds', rows.some((r) => r.overdue && !['taken', 'late', 'missed'].includes(r.status)));
   box.onclick = async (ev) => {
     const b = ev.target.closest('button'); if (!b) return;
     const refresh = () => { renderMedsCard(); renderOutlook(); if (S.tab === 'insights') renderInsights(); };
@@ -4273,7 +4323,7 @@ async function init() {
 
   registerSW();
   setupFolds();
-  setInterval(() => { try { if (document.visibilityState === 'visible' && $('#app').dataset.screen === 'main' && S.tab === 'log') { renderRoutineCard(); renderApptCard(); } } catch (e) { /* ignore */ } }, 60000);
+  setInterval(() => { try { if (document.visibilityState === 'visible' && $('#app').dataset.screen === 'main' && S.tab === 'today') { renderRoutineCard(); renderApptCard(); renderToday(); } } catch (e) { /* ignore */ } }, 60000);
 
   document.addEventListener('click', (ev) => {
     const t = ev.target.closest('[data-act]'); if (!t) return;
@@ -4285,6 +4335,7 @@ async function init() {
   });
   document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && $('#sheet-wrap').classList.contains('open')) closeSheet(); });
   $$('.tabbar [data-tab]').forEach((b) => { b.onclick = () => switchTab(b.dataset.tab); });
+  const ex = $('#open-export'); if (ex) ex.onclick = () => switchTab('export');
   $('#open-settings').onclick = openSettings;
   $('#refresh-btn').onclick = refreshApp;
   $('#fb-fab').onclick = openFeedback;

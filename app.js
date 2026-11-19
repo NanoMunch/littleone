@@ -5,12 +5,14 @@ import { AGE_GROUPS, dayCheck, fmtNum } from './nutrients.js';
 import { WHAT, WHY, REPAIR, CUP, CUP_TAGS, SUPPORT, tipsFor, cupTips, momentSummary, childLink, cupLink } from './me.js';
 import { cleanHome, mergeHome, variantFor, stepStatus, routineWeek, occurrences, upcoming, followUps, reminders, apptIcs, carerView, tickId, REPEATS } from './home.js';
 import { DETAILS, DETAIL_NUMS, cleanDetail, cleanNum, hasDetail as hasMoment, detailText, detailTitle, momentCards, tallyStats, tallyNotes } from './moments.js';
+import { watchIcons } from './icons.js';
+import { WITH_KINDS, PORTIONS, EAT_LEVELS, cleanWith, eatLevel, meals as mealsOf, breakdown as dayBreakdown, withMins, withTotals, withNotes } from './daylog.js';
 import { EFFECTS, DAY_NAMES, retestInfo, reminderIcs, slotsFor, cleanPlans, mergePlans, activeOn, isPrn, doseId, todayRows, adherence, changePoints, beforeAfter, missedLink, effectCounts } from './meds.js';
 import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.26.0';
+export const APP_VERSION = '1.27.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -307,7 +309,7 @@ function setupFolds() {
     const open = body.hidden; S.fold[k] = open; body.hidden = !open; t.setAttribute('aria-expanded', String(open));
   });
 }
-const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'tally' && e.cat !== 'tick' && e.cat !== 'ask' && e.cat !== 'activity' && e.cat !== 'screen' && e.cat !== 'feedback' && e.cat !== 'meddose' && e.cat !== 'sidefx');
+const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'tally' && e.cat !== 'tick' && e.cat !== 'ask' && e.cat !== 'activity' && e.cat !== 'screen' && e.cat !== 'feedback' && e.cat !== 'meddose' && e.cat !== 'sidefx' && e.cat !== 'with' && e.cat !== 'eat');
 
 // ---------------------------------------------------------------- height and weight
 // Height in centimetres and weight in kilograms, as typed ("104.5", "104,5", "17.2 kg"). Returns NaN when
@@ -524,17 +526,142 @@ function momentsInsightHTML() {
   return momentCards(live(), today()).map((c) => `<div class="card"><h3 class="card-title">${esc(c.title)}</h3><p class="hint">${c.facts.map(esc).join(' ')}</p>${c.tips.length ? `<p class="outlook-tip"><b>Might help:</b> ${c.tips.map(esc).join(' ')}</p>` : ''}</div>`).join('');
 }
 
+
+const minText = (m) => (m >= 60 ? fmtDur(m) : `${Math.round(m)} min`);
+// ---------------------------------------------------------------- Time with people, eating, and the day breakdown
+const allEntries = () => Array.from(S.entries.values());
+function whoSuggestions() {
+  const seen = new Map(); const add = (n) => { const k = String(n || '').trim(); if (k && !seen.has(k.toLowerCase())) seen.set(k.toLowerCase(), k); };
+  if (!isHelper()) { peopleList(false).forEach(([, x]) => add(x.name)); }
+  allEntries().forEach((e) => { if (e && !e.deleted && e.cat === 'with') add(e.who); });
+  return Array.from(seen.values()).slice(0, 14);
+}
+const withToday = () => allEntries().filter((e) => e && !e.deleted && e.cat === 'with' && cleanWith(e) && e.date === today()).sort((a, b) => String(a.time || '99').localeCompare(String(b.time || '99')));
+function withRowText(e) { const c = cleanWith(e); const span = c.time ? `${fmtTime(c.time)}${c.end ? ` to ${fmtTime(c.end)}` : ''}` : ''; return { title: `${WITH_KINDS[c.kind]}: ${c.who}`, sub: [span, c.mins && !c.end ? `${c.mins} min` : c.mins ? minText(c.mins) : '', c.note].filter(Boolean).join(' · ') }; }
+export function renderWithCard() {
+  const box = $('#with-card'); if (!box) return;
+  const list = withToday();
+  const totalMins = list.reduce((a, e) => a + withMins(e), 0);
+  const sum = list.length ? `${list.length} logged${totalMins ? ` · ${minText(totalMins)}` : ''}` : 'Who they were with';
+  const rows = list.map((e) => { const r = withRowText(e); return `<button type="button" class="time-row" data-withedit="${esc(e.id)}"><span><b>${esc(r.title)}</b><small>${esc(r.sub)}</small></span></button>`; }).join('');
+  box.innerHTML = foldCard('with', 'Time with people', sum, `${rows || '<p class="hint">Who looked after them, played, or had one-on-one time. A stay at someone\'s place can have a start and end.</p>'}
+    <div class="chips mt10">${Object.entries(WITH_KINDS).map(([k, l]) => `<button type="button" class="chip" data-withadd="${k}">${esc(l)}</button>`).join('')}</div>`, list.length > 0, 'act-card', { label: 'Add', attr: 'data-withadd="one"' });
+  box.onclick = (ev) => {
+    const a = ev.target.closest('[data-withadd]'); const ed = ev.target.closest('[data-withedit]');
+    if (a) openWithSheet(null, a.dataset.withadd); else if (ed) openWithSheet(S.entries.get(ed.dataset.withedit));
+  };
+}
+function openWithSheet(cur, kind) {
+  const c = cur ? cleanWith(cur) : null; const k0 = c ? c.kind : (WITH_KINDS[kind] ? kind : 'one');
+  const sug = whoSuggestions(); const date = c ? c.date : today();
+  openSheet(c ? 'Edit time with people' : 'Time with people', `
+    <div class="field"><label class="label" for="wp-who">Who</label><input class="input" id="wp-who" maxlength="40" autocomplete="off" value="${esc(c ? c.who : '')}" placeholder="e.g. Auntie">
+      <div class="chips mt10">${sug.map((n) => `<button type="button" class="chip" data-wpwho="${esc(n)}">${esc(n)}</button>`).join('')}</div></div>
+    <div class="field"><span class="label">What</span><div class="chips" id="wp-kinds">${Object.entries(WITH_KINDS).map(([k, l]) => `<button type="button" class="chip" data-wpkind="${k}" aria-pressed="${k === k0}">${esc(l)}</button>`).join('')}</div></div>
+    <div class="field"><label class="label" for="wp-date">Date</label><input class="input" id="wp-date" type="date" value="${esc(date)}" max="${esc(today())}"></div>
+    <div class="field two"><div><label class="label" for="wp-start">From</label><input class="input" id="wp-start" type="time" value="${esc(c ? c.time : '')}"></div><div><label class="label" for="wp-end">To</label><input class="input" id="wp-end" type="time" value="${esc(c ? c.end : '')}"></div></div>
+    <div class="field"><label class="label" for="wp-mins">Or minutes</label><input class="input" id="wp-mins" type="number" inputmode="numeric" min="0" max="1440" value="${c && !c.end && c.mins ? c.mins : ''}" placeholder="e.g. 20"></div>
+    <div class="field"><label class="label" for="wp-note">Note (optional)</label><input class="input" id="wp-note" maxlength="200" autocomplete="off" value="${esc(c ? c.note : '')}"></div>
+    <div class="actions"><button type="button" class="btn primary" data-act="wp-save">Save</button>${c ? '<button type="button" class="btn ghost" data-act="wp-del">Delete</button>' : ''}</div>`);
+  let kind0 = k0; const b = $('#sheet-body');
+  b.onclick = async (ev) => {
+    const w = ev.target.closest('[data-wpwho]'); const kk = ev.target.closest('[data-wpkind]'); const a = ev.target.closest('[data-act]');
+    if (w) { $('#wp-who', b).value = w.dataset.wpwho; return; }
+    if (kk) { kind0 = kk.dataset.wpkind; $$('[data-wpkind]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === kk))); return; }
+    if (!a) return;
+    if (a.dataset.act === 'wp-del' && cur) { await deleteActivity(cur); closeSheet(); afterDayLog(); return; }
+    if (a.dataset.act !== 'wp-save') return;
+    const who = $('#wp-who', b).value.trim(); if (!who) { toast('Add who it was with.'); return; }
+    const d = $('#wp-date', b).value || today(); const st = $('#wp-start', b).value; const en = $('#wp-end', b).value; const mins = Math.max(0, Math.min(1440, Math.round(+$('#wp-mins', b).value || 0)));
+    if (!st && !en && !mins) { toast('Add a start and end, or minutes.'); return; }
+    const now = Date.now();
+    const e = { ...(cur || { id: Sync.randomId(12), createdAt: now, by: S.myName || '', byDev: S.deviceId, src: isHelper() ? 'family' : 'parent', srcName: S.myName || 'Me', title: '', sev: 0 }), cat: 'with', updatedAt: now, kind: kind0, who, date: d, time: st || '', end: st && en ? en : '', mins: st && en ? 0 : mins, notes: $('#wp-note', b).value.trim(), tod: todOf(st) };
+    await saveActivity(e); closeSheet(); afterDayLog();
+  };
+}
+function afterDayLog() { renderWithCard(); renderEatCard(); renderBreakdownCard(); renderOutlook(); if (S.tab === 'history') renderHistory(); }
+
+// Eating: one tap for the day, plus meals and snacks if wanted. Parents only.
+const mealsToday = () => mealsOf(allEntries(), today());
+export function renderEatCard() {
+  const box = $('#eat-card'); if (!box) return;
+  if (isHelper()) { box.innerHTML = ''; return; }
+  const lvl = eatLevel(allEntries(), today()); const ms = mealsToday();
+  const sum = [lvl ? EAT_LEVELS[lvl] : '', ms.length ? `${ms.length} meal${ms.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ') || 'How they ate';
+  box.innerHTML = foldCard('eat', 'How they ate', sum, `<div class="chips" role="group" aria-label="How they ate today">${Object.entries(EAT_LEVELS).map(([k, l]) => `<button type="button" class="chip" data-eatlvl="${k}" aria-pressed="${lvl === k}">${esc(l)}</button>`).join('')}</div>
+    ${ms.map((m) => `<button type="button" class="time-row" data-eatedit="${esc(m.id)}"><span><b>${m.kind === 'snack' ? 'Snack' : 'Meal'}${m.title ? `: ${esc(m.title)}` : ''}</b><small>${esc([m.time ? fmtTime(m.time) : '', PORTIONS[m.portion], m.note].filter(Boolean).join(' · '))}</small></span></button>`).join('')}
+    <div class="chips mt10"><button type="button" class="chip" data-eatadd="meal">Add a meal</button><button type="button" class="chip" data-eatadd="snack">Add a snack</button></div>
+    <p class="hint">Only what you log is used. Not logging never reads as not eating.</p>`, false, 'act-card');
+  box.onclick = async (ev) => {
+    const l = ev.target.closest('[data-eatlvl]'); const a = ev.target.closest('[data-eatadd]'); const ed = ev.target.closest('[data-eatedit]');
+    if (l) {
+      const now = Date.now(); const k = l.dataset.eatlvl;
+      if (lvl === k) { const cur = allEntries().filter((e) => e && !e.deleted && e.cat === 'eat' && e.kind === 'level' && e.date === today()); for (const e of cur) await deleteActivity(e); }
+      else await saveActivity({ id: Sync.randomId(12), createdAt: now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, cat: 'eat', kind: 'level', level: k, title: '', notes: '', sev: 0, src: 'parent', srcName: S.myName || 'Me', date: today(), time: nowHHMM(), tod: todOf(nowHHMM()) });
+      afterDayLog();
+    } else if (a) openMealSheet(null, a.dataset.eatadd); else if (ed) openMealSheet(S.entries.get(ed.dataset.eatedit));
+  };
+}
+function openMealSheet(cur, kind) {
+  const k0 = cur ? cur.kind : (kind === 'snack' ? 'snack' : 'meal'); let portion = cur ? cur.portion : 'most';
+  openSheet(cur ? 'Edit meal' : 'Meal or snack', `
+    <div class="field"><span class="label">Type</span><div class="chips">${[['meal', 'Meal'], ['snack', 'Snack']].map(([k, l]) => `<button type="button" class="chip" data-mkind="${k}" aria-pressed="${k === k0}">${l}</button>`).join('')}</div></div>
+    <div class="field"><label class="label" for="ml-title">What (optional)</label><input class="input" id="ml-title" maxlength="60" autocomplete="off" value="${esc(cur ? cur.title : '')}" placeholder="e.g. Pasta"></div>
+    <div class="field"><label class="label" for="ml-time">Time</label><input class="input" id="ml-time" type="time" value="${esc(cur ? cur.time : nowHHMM())}"></div>
+    <div class="field"><span class="label">How much was eaten</span><div class="chips">${Object.entries(PORTIONS).map(([k, l]) => `<button type="button" class="chip" data-mport="${k}" aria-pressed="${k === portion}">${l}</button>`).join('')}</div></div>
+    <div class="field"><label class="label" for="ml-note">Note (optional)</label><input class="input" id="ml-note" maxlength="200" autocomplete="off" value="${esc(cur ? cur.notes : '')}"></div>
+    <div class="actions"><button type="button" class="btn primary" data-act="ml-save">Save</button>${cur ? '<button type="button" class="btn ghost" data-act="ml-del">Delete</button>' : ''}</div>`);
+  let kind0 = k0; const b = $('#sheet-body');
+  b.onclick = async (ev) => {
+    const mk = ev.target.closest('[data-mkind]'); const mp = ev.target.closest('[data-mport]'); const a = ev.target.closest('[data-act]');
+    if (mk) { kind0 = mk.dataset.mkind; $$('[data-mkind]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === mk))); return; }
+    if (mp) { portion = mp.dataset.mport; $$('[data-mport]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === mp))); return; }
+    if (!a) return;
+    if (a.dataset.act === 'ml-del' && cur) { await deleteActivity(cur); closeSheet(); afterDayLog(); return; }
+    if (a.dataset.act !== 'ml-save') return;
+    const now = Date.now(); const tm = $('#ml-time', b).value || nowHHMM();
+    const e = { ...(cur || { id: Sync.randomId(12), createdAt: now, by: S.myName || '', byDev: S.deviceId, src: 'parent', srcName: S.myName || 'Me', sev: 0, date: today() }), cat: 'eat', updatedAt: now, kind: kind0, portion, title: $('#ml-title', b).value.trim(), notes: $('#ml-note', b).value.trim(), time: tm, tod: todOf(tm) };
+    await saveActivity(e); closeSheet(); afterDayLog();
+  };
+}
+
+// The day so far as one timeline.
+function dayExtras(date) {
+  const out = []; const plans = medPlans();
+  allEntries().forEach((e) => {
+    if (!e || e.deleted || e.date !== date) return;
+    if (e.cat === 'meddose' && (e.status === 'taken' || e.status === 'late')) out.push({ time: e.takenAt || '', kind: 'med', text: `${(plans[e.planId] && plans[e.planId].name) || 'Medicine'} ${e.status === 'late' ? 'given late' : 'given'}` });
+    else if (e.cat === 'activity' && ACT_KINDS[e.kind]) out.push({ time: e.time || '', kind: 'act', text: `${ACT_KINDS[e.kind].label}${e.mins ? `, ${minText(e.mins)}` : ''}` });
+    else if (e.cat === 'screen' && SCR_KINDS[e.kind]) out.push({ time: e.time || '', kind: 'scr', text: `Screen: ${SCR_KINDS[e.kind].label}${e.mins ? `, ${minText(e.mins)}` : ''}` });
+    else if (e.cat === 'tick' && e.at && !e.skip && !e.member) out.push({ time: hmFromMs(e.at), kind: 'rt', text: 'Routine step done' });
+    else if (CAT[e.cat] && e.cat !== 'eating' && !['dayfeel', 'tally', 'ask', 'activity', 'screen', 'meddose', 'sidefx', 'with', 'eat', 'feedback'].includes(e.cat)) out.push({ time: e.time || '', kind: 'log', text: `${CAT[e.cat].label}${e.title ? `: ${e.title}` : ''}` });
+  });
+  return out;
+}
+function breakdownHTML(date) {
+  const rows = dayBreakdown(allEntries(), date, dayExtras(date));
+  if (!rows.length) return '<p class="hint">Nothing logged for this day yet.</p>';
+  return `<ul class="bd-list">${rows.map((r) => `<li class="bd-${r.kind}"><span class="bd-time">${r.time ? esc(fmtTime(r.time)) : ''}${r.to ? `<small>to ${esc(fmtTime(r.to))}</small>` : ''}</span><span class="bd-text">${esc(r.text)}</span></li>`).join('')}</ul>`;
+}
+export function renderBreakdownCard() {
+  const box = $('#breakdown-card'); if (!box) return;
+  const rows = dayBreakdown(allEntries(), today(), dayExtras(today()));
+  box.innerHTML = foldCard('breakdown', 'Day breakdown', rows.length ? `${rows.length} so far` : 'Builds as you log', breakdownHTML(today()), rows.length > 0, 'act-card');
+}
+function openDayBreakdown(date) { openSheet(date === today() ? 'Today' : fmtDayLong(date), breakdownHTML(date)); }
+
 // ---------------------------------------------------------------- Today tab: what needs attention, set-up list, quick links, order
 S.attn = {};
 function setAttn(k, v) { S.attn[k] = !!v; const d = $('#today-dot'); if (d) d.hidden = !Object.values(S.attn).some(Boolean); }
-const TODAY_EVENING = ['outlook-card', 'timer-card', 'routine-card', 'ask-card', 'meds-card', 'appt-card', 'plan-card', 'dayfeel-card', 'activity-card', 'screen-card', 'tally-card', 'setup-card', 'today-links'];
-const TODAY_DAY = ['outlook-card', 'meds-card', 'appt-card', 'ask-card', 'timer-card', 'activity-card', 'screen-card', 'tally-card', 'dayfeel-card', 'routine-card', 'plan-card', 'setup-card', 'today-links'];
+const TODAY_EVENING = ['outlook-card', 'timer-card', 'routine-card', 'ask-card', 'meds-card', 'appt-card', 'plan-card', 'sofar', 'breakdown-card', 'setup-card', 'today-links'];
+const TODAY_DAY = ['outlook-card', 'meds-card', 'appt-card', 'ask-card', 'timer-card', 'sofar', 'breakdown-card', 'routine-card', 'plan-card', 'setup-card', 'today-links'];
 async function openPeople() { await openSettings(); setTimeout(() => { const el = $('[data-act="fam-add"]') || $('[data-act="fam-setup"]'); if (el) el.scrollIntoView({ block: 'center' }); }, 50); }
 export function renderToday() {
   const panel = $('#tab-today'); if (!panel) return;
   const hr = new Date().getHours(); const order = hr >= 16 || hr < 5 ? TODAY_EVENING : TODAY_DAY;
   const cur = Array.from(panel.children).map((c) => c.id).join();
   if (cur !== order.join()) order.forEach((id) => { const el = document.getElementById(id); if (el) panel.appendChild(el); });
+  const sh = $('#sofar-head'); if (sh) sh.hidden = isHelper();
   renderSetupCard();
   const links = $('#today-links');
   if (links) {
@@ -1113,7 +1240,7 @@ export function tagStats(ratings, tagMap) {
 // ---------------------------------------------------------------- today's outlook
 // A plain-rules heads-up at the top of the Log tab. It only uses what has been logged, compares with this
 // child's own recent sleep, and always lists its reasons. It never predicts; it says "may".
-export function outlook(all, nights, ratings, todayStr, nowHour, tagMap = new Map(), meds = {}) {
+export function outlook(all, nights, ratings, todayStr, nowHour, tagMap = new Map(), meds = {}, extra = {}) {
   const reasons = []; const tips = new Set();
   const byWake = new Map(nights.map((n) => [n.wakeDate, n]));
   const base = nights.filter((n) => n.wakeDate < todayStr && n.wakeDate >= addDays(todayStr, -15));
@@ -1148,17 +1275,9 @@ export function outlook(all, nights, ratings, todayStr, nowHour, tagMap = new Ma
   const yd2 = ratings.get(addDays(todayStr, -2));
   if (yd != null && yd >= 2.5 && yd2 != null && yd2 >= 2.5) { reasons.push(pick(['A couple of bumpier days in a row, so today might want a little extra slack.', `Yesterday and the day before were both rated ${dayFeelWord(Math.max(yd, yd2))}.`])); tips.add('A bit of space in the plan, or a short break for you, can be worth it on a run like this. Ten minutes of one-on-one time before the first request can also help.'); }
   else if (yd != null && yd >= 2.5) { reasons.push(`Yesterday was rated ${dayFeelWord(yd)}.`); tips.add('Starting with 10 minutes of one-on-one time before the first request can help the day get going.'); }
-  // Food: only when eating is logged regularly, so no logging doesn't read as no eating.
-  const eat = all.filter((e) => e.cat === 'eating' && e.date >= addDays(todayStr, -14));
-  // Not in the evening, and not once bedtime has been logged: the gap since dinner isn't a sign of hunger then.
-  const bedtimeDone = all.some((e) => e.cat === 'sleep' && e.sleep === 'bed' && e.date === todayStr && (e.time || '') >= '17:00');
-  if (new Set(eat.map((e) => e.date)).size >= 4 && nowHour >= 11 && nowHour < 19 && !bedtimeDone) {
-    const t = eat.filter((e) => e.date === todayStr && e.time).map((e) => e.time).sort().pop();
-    const anyToday = eat.some((e) => e.date === todayStr);
-    const lastMin = t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : null;
-    if (!anyToday) { reasons.push('No food logged yet today.'); tips.add('A snack soon could help, and low energy can make requests harder.'); }
-    else if (lastMin != null && nowHour * 60 - lastMin >= 240) { reasons.push(`No food logged since ${fmtTime(t)}.`); tips.add('A snack soon could help, and low energy can make requests harder.'); }
-  }
+  // Food is never assumed: only what has actually been logged shows, so no logging doesn't read as no eating.
+  if (extra.eatLevel === 'low') { reasons.push('Eating has been on the low side today.'); tips.add('Small, easy snacks offered now and then can help, and low energy can make requests harder.'); }
+  (extra.notes || []).forEach((n) => tips.add(n));
   if (meds.missed) { reasons.push(meds.missed === 1 ? 'A dose was missed today.' : 'Doses were missed today.'); tips.add('Noting how the day goes helps show whether it made a difference.'); }
   else if (meds.late) reasons.push('A dose was given late today.');
   const tt = tagMap.get(todayStr) || new Set();
@@ -1174,7 +1293,7 @@ function renderOutlook() {
   const off = !!(S.outlook && S.outlook.off) || (S.outlook && S.outlook.hideDay === today());
   if (isHelper() || off) { box.innerHTML = ''; return; }
   const all = live();
-  const o = outlook(all, sleepNights(all), dayRatings(dayfeelEntries()), today(), new Date().getHours(), dayTagMap(tagSource()), { missed: medDoses().filter((d) => d.date === today() && d.status === 'missed').length, late: medDoses().filter((d) => d.date === today() && d.status === 'late').length });
+  const o = outlook(all, sleepNights(all), dayRatings(dayfeelEntries()), today(), new Date().getHours(), dayTagMap(tagSource()), { missed: medDoses().filter((d) => d.date === today() && d.status === 'missed').length, late: medDoses().filter((d) => d.date === today() && d.status === 'late').length }, { eatLevel: eatLevel(Array.from(S.entries.values()), today()), notes: withNotes(Array.from(S.entries.values()), today(), (d, n) => addDays(d, -n), (dayRatings(dayfeelEntries()).get(addDays(today(), -1)) || 0) >= 2.5) });
   if (!o) { box.innerHTML = ''; return; }
   box.innerHTML = `<div class="card outlook ${o.level}" role="region" aria-label="Today's outlook">
     <h3 class="card-title">${o.level === 'harder' ? 'Today may be a bit harder' : 'Worth knowing today'}</h3>
@@ -1241,10 +1360,22 @@ function toast(msg, action) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), action ? 6000 : 2600);
 }
+// A row of jump links at the top of Settings, so each part is one tap away.
+const SET_GROUPS = [['Your child', 'Child'], ['You', 'You'], ['Family and carers', 'People'], ['People', 'People'], ['Medicines', 'Medicines'], ['Sync', 'Sync'], ['Backup file', 'Backup'], ['Feedback', 'Feedback'], ['Privacy', 'Privacy']];
+function addSettingsJump(body) {
+  const secs = Array.from(body.querySelectorAll('.set-section > h3')); const seen = new Set(); const links = [];
+  secs.forEach((h, i) => { const g = SET_GROUPS.find(([t]) => h.textContent.trim().startsWith(t)); if (!g || seen.has(g[1])) return; seen.add(g[1]); h.id = `set-sec-${i}`; links.push([h.id, g[1]]); });
+  if (links.length < 3) return;
+  const nav = document.createElement('div'); nav.className = 'chips set-jump'; nav.setAttribute('role', 'navigation'); nav.setAttribute('aria-label', 'Jump to');
+  nav.innerHTML = links.map(([id, l]) => `<button type="button" class="chip" data-jump="${id}">${esc(l)}</button>`).join('');
+  nav.addEventListener('click', (ev) => { const b = ev.target.closest('[data-jump]'); const t = b && document.getElementById(b.dataset.jump); if (t) t.scrollIntoView({ block: 'start' }); });
+  body.insertBefore(nav, body.firstChild);
+}
 function openSheet(title, html, { full = false, onMount } = {}) {
   $('#sheet-title').textContent = title;
   const sheet = $('#sheet'); sheet.classList.toggle('full', full);
   const body = $('#sheet-body'); body.innerHTML = html; body.scrollTop = 0;
+  if (title === 'Settings') addSettingsJump(body);
   body.onclick = null; body.oninput = null; body.onchange = null; body.onsubmit = null;
   $('#sheet-wrap').classList.add('open');
   document.body.style.overflow = 'hidden';
@@ -1276,6 +1407,7 @@ function showMain(opts = {}) {
   renderOutlook();
   renderTimerCard();
   renderHomeCards();
+  renderWithCard(); renderEatCard(); renderBreakdownCard();
   renderToday();
   mountLogForm();
   switchTab(S.tab);
@@ -1307,7 +1439,7 @@ function renderTab() {
   else if (S.tab === 'time') renderTime();
   else if (S.tab === 'today') renderToday();
 }
-function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderActivityCard(); renderScreenCard(); renderTallyCard(); renderMedsCard(); renderOutlook(); renderTimerCard(); renderHomeCards(); renderToday(); }
+function renderDependent() { renderHeader(); renderTab(); renderDayCard(); renderActivityCard(); renderScreenCard(); renderTallyCard(); renderMedsCard(); renderOutlook(); renderTimerCard(); renderHomeCards(); renderWithCard(); renderEatCard(); renderBreakdownCard(); renderToday(); }
 
 // ---------------------------------------------------------------- entry form
 // ---- people (shared): partner, carers, family. Stored in the shared profile so every phone sees the same list.
@@ -2253,13 +2385,14 @@ function renderHistory() {
   S.hist.groups = new Map();
   days.forEach(({ date, list: dayList }) => {
     const flag = flagDays.has(date) ? ` <button type="button" class="day-flag${flagDays.get(date) ? ' over' : ''}" data-check-day="${date}">⚠ Supplement check</button>` : '';
-    html += `<h3 class="day-head">${date === t ? 'Today' : date === y ? 'Yesterday' : esc(fmtDayLong(date))}${flag}</h3>`;
+    html += `<h3 class="day-head">${date === t ? 'Today' : date === y ? 'Yesterday' : esc(fmtDayLong(date))}${flag} <button type="button" class="day-flag bd-btn" data-bd-day="${date}">Day breakdown</button></h3>`;
     groupDay(dayList).forEach((g) => { html += g.items.length > 1 ? groupHTML(g, nightByWake) : entryCardHTML(g.items[0], nightByWake); });
   });
   if (list.length > S.hist.limit) html += `<button type="button" class="btn ghost more-btn" data-more>Show ${Math.min(60, list.length - S.hist.limit)} more</button>`;
   html += earlierBtn;
   box.innerHTML = html;
   box.onclick = (ev) => {
+    const bd = ev.target.closest('[data-bd-day]'); if (bd) { openDayBreakdown(bd.dataset.bdDay); return; }
     if (ev.target.closest('[data-more]')) { S.hist.limit += 60; renderHistory(); return; }
     if (ev.target.closest('[data-earlier]')) { S.hist.days = S.hist.days <= 1 ? 8 : S.hist.days + 7; renderHistory(); return; }
     const dc = ev.target.closest('[data-check-day]'); if (dc) { openDayCheck(dc.dataset.checkDay); return; }
@@ -2980,7 +3113,7 @@ async function mergeHelper(id, p) {
   let changed = 0; let n = 0; const put = [];
   for (const r of Array.isArray(p.entries) ? p.entries : []) {
     if (!r || typeof r.id !== 'string' || !ID_RE.test(r.id)) continue;
-    if (!r.deleted && !((CAT[r.cat] || r.cat === 'tick' || r.cat === 'ask') && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || '')))) continue;
+    if (!r.deleted && !((CAT[r.cat] || r.cat === 'tick' || r.cat === 'ask' || r.cat === 'with') && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || '')))) continue;
     if (!r.deleted) n++;
     const l = S.entries.get(r.id);
     if (l && l.member !== id) continue;
@@ -4323,6 +4456,7 @@ async function init() {
 
   registerSW();
   setupFolds();
+  watchIcons(document.body);
   setInterval(() => { try { if (document.visibilityState === 'visible' && $('#app').dataset.screen === 'main' && S.tab === 'today') { renderRoutineCard(); renderApptCard(); renderToday(); } } catch (e) { /* ignore */ } }, 60000);
 
   document.addEventListener('click', (ev) => {

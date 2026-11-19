@@ -701,3 +701,20 @@ a.btn { text-decoration: none; }
 .today-links { display: grid; gap: 8px; margin: 14px 0 6px; }
 .today-links .btn { text-align: left; display: flex; flex-direction: column; gap: 2px; }
 .today-links .btn small { font-weight: 400; opacity: .75; }
+
+.sec-head { font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 18px 2px 4px; font-weight: 600; }
+.sec-head[hidden] { display: none; }
+.bd-list { list-style: none; margin: 0; padding: 0; }
+.bd-list li { display: flex; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line, rgba(0,0,0,.08)); font-size: .92rem; }
+.bd-list li:first-child { border-top: 0; }
+.bd-time { min-width: 68px; color: var(--muted); font-variant-numeric: tabular-nums; } .bd-time small { display: block; font-size: .75rem; }
+.bd-with .bd-text { font-weight: 600; }
+.bd-btn { margin-left: 6px; }
+.field.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.ico { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; vertical-align: -0.2em; flex: none; }
+.cat-btn .ico, .chip .ico { color: #8a6d1f; }
+.today-links .btn { display: flex; flex-direction: column; align-items: flex-start; }
+
+.set-jump { position: sticky; top: -1px; z-index: 2; background: var(--cream, #fbf6ec); padding: 8px 0 10px; margin-bottom: 8px; }

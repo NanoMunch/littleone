@@ -1,5 +1,5 @@
 {
-  "version": "1.26.0",
+  "version": "1.27.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -132,6 +132,10 @@
     {
       "date": "2026-11-16",
       "notes": "1.26.0 New Today tab: everything happening now (outlook, timers, routine, medicines, appointments, days ahead, outdoor play, screen time, quick taps) with the most useful one-tap action on each folded card and the most relevant cards first for the time of day. The Log tab is now just the form. A gold dot on Today shows when something needs you. A Getting set up list, plus People and carers, Share or export and Settings buttons, make everything easy to find. Export moved to a button in the header."
+    },
+    {
+      "date": "2026-11-19",
+      "notes": "1.27.0 Time with people (who looked after them, played, one-on-one, stays at someone's place, with start and end; carers can log it too). How they ate: one tap for the day plus meals and snacks with how much was eaten. A Day breakdown timeline on Today, and a Day breakdown button on each day in History. The outlook no longer nags about unlogged food and now uses time with people gently. Today so far groups the day cards. Emoji replaced with one set of rounded line icons. Settings has jump links at the top."
     }
   ]
 }

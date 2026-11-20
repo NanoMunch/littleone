@@ -12,7 +12,7 @@ import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.27.0';
+export const APP_VERSION = '1.28.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -289,7 +289,7 @@ const S = {
   track: loadTrack(), fold: {}, plan: null,
 };
 // What this phone shows. Only a display choice on this phone (localStorage), never synced.
-const TRACK_CARDS = [['dayfeel', 'How did today feel?'], ['activity', 'Outdoors and active play'], ['screen', 'Screen time'], ['tally', 'Quick taps'], ['meds', 'Medicines today'], ['routine', "Tonight's routine"], ['plan', 'Days ahead'], ['appt', 'Appointments'], ['ask', 'Carer questions'], ['setup', 'Getting set up list'], ['timer', 'Timers']];
+const TRACK_CARDS = [['dayfeel', 'How did today feel?'], ['activity', 'Outdoors and active play'], ['screen', 'Screen time'], ['tally', 'Quick taps'], ['meds', 'Medicines and supplements'], ['routine', "Tonight's routine"], ['plan', 'Days ahead'], ['appt', 'Appointments'], ['ask', 'Carer questions'], ['setup', 'Getting set up list'], ['timer', 'Timers']];
 function loadTrack() {
   try { const t = JSON.parse(localStorage.getItem('lo-track') || '{}') || {}; const arr = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string').slice(0, 40) : []); return { openCards: !!t.openCards, hide: arr(t.hide), hideCats: arr(t.hideCats), histAll: !!t.histAll }; }
   catch { return { openCards: false, hide: [], hideCats: [], histAll: false }; }
@@ -591,8 +591,9 @@ export function renderEatCard() {
   box.innerHTML = foldCard('eat', 'How they ate', sum, `<div class="chips" role="group" aria-label="How they ate today">${Object.entries(EAT_LEVELS).map(([k, l]) => `<button type="button" class="chip" data-eatlvl="${k}" aria-pressed="${lvl === k}">${esc(l)}</button>`).join('')}</div>
     ${ms.map((m) => `<button type="button" class="time-row" data-eatedit="${esc(m.id)}"><span><b>${m.kind === 'snack' ? 'Snack' : 'Meal'}${m.title ? `: ${esc(m.title)}` : ''}</b><small>${esc([m.time ? fmtTime(m.time) : '', PORTIONS[m.portion], m.note].filter(Boolean).join(' · '))}</small></span></button>`).join('')}
     <div class="chips mt10"><button type="button" class="chip" data-eatadd="meal">Add a meal</button><button type="button" class="chip" data-eatadd="snack">Add a snack</button></div>
-    <p class="hint">Only what you log is used. Not logging never reads as not eating.</p>`, false, 'act-card');
+    <button type="button" class="chip mt10" data-eatnote="1">Write a longer eating note</button><p class="hint">Only what you log is used. Not logging never reads as not eating.</p>`, false, 'act-card');
   box.onclick = async (ev) => {
+    if (ev.target.closest('[data-eatnote]')) { openLogFor('eating'); return; }
     const l = ev.target.closest('[data-eatlvl]'); const a = ev.target.closest('[data-eatadd]'); const ed = ev.target.closest('[data-eatedit]');
     if (l) {
       const now = Date.now(); const k = l.dataset.eatlvl;
@@ -646,22 +647,125 @@ function breakdownHTML(date) {
 export function renderBreakdownCard() {
   const box = $('#breakdown-card'); if (!box) return;
   const rows = dayBreakdown(allEntries(), today(), dayExtras(today()));
-  box.innerHTML = foldCard('breakdown', 'Day breakdown', rows.length ? `${rows.length} so far` : 'Builds as you log', breakdownHTML(today()), rows.length > 0, 'act-card');
+  box.innerHTML = foldCard('breakdown', 'Day breakdown', rows.length ? `${rows.length} so far` : 'Builds as you log', breakdownHTML(today()), true, 'act-card');
 }
 function openDayBreakdown(date) { openSheet(date === today() ? 'Today' : fmtDayLong(date), breakdownHTML(date)); }
 
 // ---------------------------------------------------------------- Today tab: what needs attention, set-up list, quick links, order
 S.attn = {};
 function setAttn(k, v) { S.attn[k] = !!v; const d = $('#today-dot'); if (d) d.hidden = !Object.values(S.attn).some(Boolean); }
-const TODAY_EVENING = ['outlook-card', 'timer-card', 'routine-card', 'ask-card', 'meds-card', 'appt-card', 'plan-card', 'sofar', 'breakdown-card', 'setup-card', 'today-links'];
-const TODAY_DAY = ['outlook-card', 'meds-card', 'appt-card', 'ask-card', 'timer-card', 'sofar', 'breakdown-card', 'routine-card', 'plan-card', 'setup-card', 'today-links'];
 async function openPeople() { await openSettings(); setTimeout(() => { const el = $('[data-act="fam-add"]') || $('[data-act="fam-setup"]'); if (el) el.scrollIntoView({ block: 'center' }); }, 50); }
+
+// ---------------------------------------------------------------- Log tiles (each person picks their own, saved on this phone)
+const CARD_RENDER = () => ({ 'timer-card': renderTimerCard, 'meds-card': renderMedsCard, 'routine-card': renderRoutineCard, 'appt-card': renderApptCard, 'ask-card': renderAskCard, 'plan-card': renderPlanCard, 'dayfeel-card': renderDayCard, 'eat-card': renderEatCard, 'with-card': renderWithCard, 'activity-card': renderActivityCard, 'screen-card': renderScreenCard, 'tally-card': renderTallyCard });
+function tileDefs() {
+  const d = {
+    ate: { label: 'Ate', em: '🍽', card: 'eat-card', parent: true },
+    sleep: { label: 'Slept', em: '🌙', cat: 'sleep' },
+    played: { label: 'Played', em: '🏃', card: 'activity-card', parent: true },
+    with: { label: 'With someone', em: '👥', card: 'with-card' },
+    meds: { label: 'Medicines and supplements', short: 'Medicines', em: '💊', card: 'meds-card', parent: true },
+    mood: { label: 'Mood', em: '🙂', card: 'dayfeel-card', parent: true },
+    unwell: { label: 'Unwell', em: '🤒', cat: 'health' },
+    screen: { label: 'Screen time', em: '📺', card: 'screen-card', parent: true },
+    taps: { label: 'Quick taps', em: '😩', card: 'tally-card', parent: true },
+    timer: { label: 'Timer', em: '⏱', card: 'timer-card', parent: true },
+    routine: { label: 'Bedtime routine', short: 'Routine', em: '🛁', card: 'routine-card' },
+    plans: { label: 'Days ahead', em: '📅', card: 'plan-card' },
+    appts: { label: 'Appointments', em: '🩺', card: 'appt-card', parent: true },
+    ask: { label: 'Carer questions', short: 'Questions', em: '💬', card: 'ask-card', parent: true },
+  };
+  CATS.forEach((c) => { if (c.k === 'eating') d[`cat:${c.k}`] = { label: c.label, em: c.em, card: 'eat-card', parent: true }; else if (c.k !== 'health' && c.k !== 'sleep') d[`cat:${c.k}`] = { label: c.label, em: c.em, cat: c.k }; });
+  if (isHelper()) Object.keys(d).forEach((k) => { if (d[k].parent) delete d[k]; });
+  return d;
+}
+const TILE_DEFAULT = ['ate', 'sleep', 'played', 'with', 'meds', 'mood', 'unwell'];
+const TILE_DEFAULT_HELPER = ['sleep', 'with', 'routine', 'plans', 'unwell', 'cat:behaviour', 'cat:win'];
+function chosenTiles() {
+  const d = tileDefs(); let list = null;
+  try { list = JSON.parse(localStorage.getItem(isHelper() ? 'lo-tiles-h' : 'lo-tiles') || 'null'); } catch { /* ignore */ }
+  if (!Array.isArray(list)) list = isHelper() ? TILE_DEFAULT_HELPER : TILE_DEFAULT;
+  return list.filter((k) => d[k]).slice(0, 7);
+}
+function saveTiles(list) { try { localStorage.setItem(isHelper() ? 'lo-tiles-h' : 'lo-tiles', JSON.stringify(list)); } catch { /* ignore */ } }
+function tileBtn(k, t) { return `<button type="button" class="tile" data-tile="${esc(k)}"><span class="tile-ic" aria-hidden="true">${t.em}</span><span>${esc(t.short || t.label)}</span></button>`; }
+function renderTiles() {
+  const box = $('#tiles'); if (!box) return;
+  const d = tileDefs();
+  box.innerHTML = chosenTiles().map((k) => tileBtn(k, d[k])).join('') + '<button type="button" class="tile" data-tile="more"><span class="tile-ic" aria-hidden="true">•••</span><span>More</span></button>';
+  box.onclick = (ev) => { const b = ev.target.closest('[data-tile]'); if (b) openTile(b.dataset.tile); };
+}
+function restoreSheetCard() {
+  if (!S.sheetCard) return; const el = document.getElementById(S.sheetCard); S.sheetCard = null;
+  if (el) $('#card-store').appendChild(el);
+  renderToday();
+}
+function openTile(k) {
+  if (k === 'more') { openMoreTiles(); return; }
+  const t = tileDefs()[k]; if (!t) return;
+  if (t.cat) { openLogFor(t.cat); return; }
+  const el = document.getElementById(t.card); if (!el) return;
+  const fn = CARD_RENDER()[t.card];
+  const key = (el.querySelector('[data-fold]') || {}).dataset; if (key && key.fold) S.fold[key.fold] = true;
+  if (fn) fn();
+  const f = el.querySelector('[data-fold]'); if (f) S.fold[f.dataset.fold] = true; if (fn) fn();
+  openSheet(t.label, '<div id="tile-slot"></div>');
+  if (!el.innerHTML.trim()) { $('#tile-slot').innerHTML = `<p class="hint">Nothing to show here right now.${t.card === 'routine-card' && !isHelper() ? ' Add a bedtime routine in Settings.' : ''}</p>`; return; }
+  $('#tile-slot').appendChild(el); S.sheetCard = t.card; $('#now-sec').hidden = !$('#now').children.length;
+}
+function openLogFor(cat) {
+  closeSheet(); S.fromTile = true; switchTab('log');
+  const b = $(`#log-form .cat-btn[data-cat="${cat}"]`);
+  if (b && b.getAttribute('aria-pressed') !== 'true') b.click();
+}
+function openMoreTiles() {
+  const d = tileDefs(); const mine = new Set(chosenTiles());
+  const rest = Object.keys(d).filter((k) => !mine.has(k));
+  openSheet('More', `<div class="tiles tiles-more">${rest.map((k) => tileBtn(k, d[k])).join('')}</div>
+    <button type="button" class="btn ghost block mt10" data-act="tiles-edit">Choose my tiles</button>
+    <p class="hint">Pick the ones you use most for the Today screen. Your partner can pick their own on their phone.</p>`);
+  $('#sheet-body').onclick = (ev) => { const b = ev.target.closest('[data-tile]'); if (b) { closeSheet(); openTile(b.dataset.tile); return; } if (ev.target.closest('[data-act="tiles-edit"]')) openTileEditor(); };
+}
+function openTileEditor() {
+  const d = tileDefs(); let list = chosenTiles();
+  const draw = () => {
+    $('#sheet-body').innerHTML = `<p class="hint">Up to 7 tiles, plus More. Use the arrows to change the order.</p>
+      <ol class="tile-edit">${list.map((k, i) => `<li><span>${d[k].em} ${esc(d[k].label)}</span><span class="act-btns"><button type="button" class="chip" data-tup="${i}" aria-label="Move up"${i ? '' : ' disabled'}>↑</button><button type="button" class="chip" data-tdown="${i}" aria-label="Move down"${i < list.length - 1 ? '' : ' disabled'}>↓</button><button type="button" class="chip" data-toff="${esc(k)}">Remove</button></span></li>`).join('')}</ol>
+      <h4 class="feel-sub">Add a tile</h4><div class="chips">${Object.keys(d).filter((k) => !list.includes(k)).map((k) => `<button type="button" class="chip" data-ton="${esc(k)}"${list.length >= 7 ? ' disabled' : ''}>${d[k].em} ${esc(d[k].label)}</button>`).join('')}</div>
+      <div class="actions mt10"><button type="button" class="btn primary" data-act="tiles-save">Save</button><button type="button" class="btn ghost" data-act="tiles-reset">Back to the usual set</button></div>`;
+  };
+  openSheet('Choose my tiles', ''); draw();
+  $('#sheet-body').onclick = (ev) => {
+    const b = ev.target.closest('button'); if (!b) return; const ds = b.dataset;
+    if (ds.tup) { const i = +ds.tup; [list[i - 1], list[i]] = [list[i], list[i - 1]]; draw(); }
+    else if (ds.tdown) { const i = +ds.tdown; [list[i + 1], list[i]] = [list[i], list[i + 1]]; draw(); }
+    else if (ds.toff) { list = list.filter((x) => x !== ds.toff); draw(); }
+    else if (ds.ton && list.length < 7) { list.push(ds.ton); draw(); }
+    else if (ds.act === 'tiles-reset') { list = (isHelper() ? TILE_DEFAULT_HELPER : TILE_DEFAULT).slice(); draw(); }
+    else if (ds.act === 'tiles-save') { saveTiles(list); closeSheet(); renderTiles(); toast('Tiles saved on this phone'); }
+  };
+}
+
+// Today: Now (only what needs you), Log tiles, the day, worth knowing. Cards not needed right now wait in a hidden store
+// and open in a sheet from their tile, so nothing shows twice.
+const NOW_ORDER = ['timer-card', 'meds-card', 'routine-card', 'appt-card', 'ask-card', 'plan-card'];
+function nowWanted(id) {
+  const el = document.getElementById(id); if (!el || !el.innerHTML.trim()) return false;
+  if (id === 'timer-card') return !!(S.actRun || S.scrRun || S.careRun);
+  if (id === 'meds-card') return !!S.attn.meds;
+  if (id === 'routine-card') return !!(S.attn.routine || S.rtWindow || (isHelper() && el.innerHTML.trim()));
+  if (id === 'appt-card') return !!S.attn.appt;
+  if (id === 'ask-card') return !!S.attn.ask;
+  if (id === 'plan-card') return isHelper();
+  return false;
+}
 export function renderToday() {
   const panel = $('#tab-today'); if (!panel) return;
-  const hr = new Date().getHours(); const order = hr >= 16 || hr < 5 ? TODAY_EVENING : TODAY_DAY;
-  const cur = Array.from(panel.children).map((c) => c.id).join();
-  if (cur !== order.join()) order.forEach((id) => { const el = document.getElementById(id); if (el) panel.appendChild(el); });
-  const sh = $('#sofar-head'); if (sh) sh.hidden = isHelper();
+  const now = $('#now'); const store = $('#card-store');
+  NOW_ORDER.forEach((id) => { const el = document.getElementById(id); if (!el || S.sheetCard === id) return; if (nowWanted(id)) now.appendChild(el); else if (el.parentNode !== store) store.appendChild(el); });
+  $('#now-sec').hidden = !now.children.length;
+  const oc = $('#outlook-card'); $('#know-sec').hidden = !(oc && oc.innerHTML.trim());
+  renderTiles();
   renderSetupCard();
   const links = $('#today-links');
   if (links) {
@@ -736,13 +840,13 @@ function qaBlock(refKey) {
 export function renderRoutineCard() {
   const box = $('#routine-card'); if (!box) return;
   const routine = isHelper() ? (planData() && planData().routine) : home().routine;
-  setAttn('routine', false);
+  setAttn('routine', false); S.rtWindow = false;
   if (!routine || cardHidden('routine')) { box.innerHTML = ''; return; }
   const t = today(); const v = variantFor(routine, t);
   if (!v || !v.steps.length) { box.innerHTML = ''; return; }
   const now = nowHHMM(); const st = stepStatus(v.steps, ticksFor(t), now, true);
   const first = hmMin(v.steps[0].time); const last = hmMin((v.steps[v.steps.length - 1].end || v.steps[v.steps.length - 1].time));
-  const inWindow = hmMin(now) >= first - 60 && hmMin(now) <= last + 90;
+  const inWindow = hmMin(now) >= first - 60 && hmMin(now) <= last + 90; S.rtWindow = inWindow;
   const nextOpen = st.items.find((i) => i.state === 'open');
   const sum = !nextOpen ? `All done (${st.done} of ${st.items.length})` : nextOpen.missed ? `Still to do: ${nextOpen.step.text}` : `Next: ${nextOpen.step.text} ${fmtTime(nextOpen.step.time)}`;
   const rows = st.items.map((i, ix) => {
@@ -1288,7 +1392,8 @@ export function outlook(all, nights, ratings, todayStr, nowHour, tagMap = new Ma
   if (!reasons.length) return null;
   return { level: strong || reasons.length >= 2 ? 'harder' : 'note', reasons, tips: Array.from(tips).slice(0, 2) };
 }
-function renderOutlook() {
+function renderOutlook() { renderOutlookInner(); const k = $('#know-sec'); const oc = $('#outlook-card'); if (k && oc) k.hidden = !oc.innerHTML.trim(); }
+function renderOutlookInner() {
   const box = $('#outlook-card'); if (!box) return;
   const off = !!(S.outlook && S.outlook.off) || (S.outlook && S.outlook.hideDay === today());
   if (isHelper() || off) { box.innerHTML = ''; return; }
@@ -1372,6 +1477,7 @@ function addSettingsJump(body) {
   body.insertBefore(nav, body.firstChild);
 }
 function openSheet(title, html, { full = false, onMount } = {}) {
+  restoreSheetCard();
   $('#sheet-title').textContent = title;
   const sheet = $('#sheet'); sheet.classList.toggle('full', full);
   const body = $('#sheet-body'); body.innerHTML = html; body.scrollTop = 0;
@@ -1382,6 +1488,7 @@ function openSheet(title, html, { full = false, onMount } = {}) {
   if (onMount) onMount(body);
 }
 function closeSheet() {
+  restoreSheetCard();
   $('#sheet-wrap').classList.remove('open');
   $('#sheet-body').innerHTML = '';
   document.body.style.overflow = '';
@@ -1421,7 +1528,7 @@ function renderHeader() {
   $('#child-line').textContent = n ? `${possessive(n)} journal` : 'Add your child\'s name in Settings';
 }
 
-function switchTab(tab) {
+export function switchTab(tab) {
   if (isHelper() && tab !== 'today' && tab !== 'log' && tab !== 'history') tab = 'today';
   if (tab !== 'time') clearInterval(careTick);
   if (tab === 'history' && S.tab !== 'history') S.hist.days = S.track.histAll ? 100000 : 1;
@@ -2103,6 +2210,7 @@ async function saveForm(el) {
   } else {
     clearTimeout(draftTimer); await kvDel('draft').catch(() => {});
     mountForm(el, null, 'new');
+    if (S.fromTile) { S.fromTile = false; switchTab('today'); }
     window.scrollTo({ top: 0, behavior: 'smooth' });
     toast(`Entry saved${savedWhen(date, e.time)}`, { label: 'View', fn: () => switchTab('history') });
   }
@@ -3445,7 +3553,7 @@ async function openSettings() {
       `}
     </div>
     ${peopleSectionHTML()}
-    <div class="set-section"><h3>Medicines</h3><p class="hint intro">A daily plan with one-tap Taken, Late and Missed, shared with everyone using this log.</p><div class="btn-stack"><button type="button" class="btn dark" data-act="med-manage">${Object.keys(medPlans()).length ? 'Manage medicines' : 'Add a medicine'}</button></div></div>
+    <div class="set-section"><h3>Medicines and supplements</h3><p class="hint intro">A daily plan with one-tap Taken, Late and Missed, shared with everyone using this log.</p><div class="btn-stack"><button type="button" class="btn dark" data-act="med-manage">${Object.keys(medPlans()).length ? 'Manage medicines' : 'Add a medicine'}</button></div></div>
     <div class="set-section"><h3>Feedback</h3><p class="hint intro">Tell us what works and what doesn't. ${S.sync ? 'Feedback from your phones is kept together here.' : ''}</p><div class="btn-stack"><button type="button" class="btn dark" data-act="fb-open">Send feedback</button>${S.sync ? `<button type="button" class="btn ghost" data-act="fb-list">See feedback (${feedbackEntries().length})</button>` : ''}</div></div>
     ${S.sync ? familySectionHTML() : ''}
     <div class="set-section">
@@ -4010,7 +4118,7 @@ export function renderMedsCard() {
   const nextGoal = Object.entries(active).map(([id, p]) => retestInfo(p, id, doses, t)).filter((r) => r && r.days >= 0).sort((a, b) => a.days - b.days)[0];
   const given = rows.filter((r) => r.status === 'taken' || r.status === 'late').length;
   const msum = (rows.length ? `${given} of ${rows.length} given${off ? ` · ${off} missed` : ''}` : 'As needed only') + (nextGoal ? ` · ${nextGoal.short}` : '');
-  box.innerHTML = foldCard('meds', 'Medicines today', msum, `${rowHTML}${prnHTML}${goalHTML}
+  box.innerHTML = foldCard('meds', 'Medicines and supplements', msum, `${rowHTML}${prnHTML}${goalHTML}
     ${off ? '<p class="hint">A dose was missed. Noting how the day goes helps show whether it made a difference.</p>' : late ? '<p class="hint">A dose was given late today.</p>' : ''}
     <div class="act-btns mt10"><button type="button" class="chip" data-act="med-effect">Note an effect</button><button type="button" class="chip" data-act="med-manage">Manage medicines</button></div>`, rows.some((r) => r.overdue && r.status !== 'taken' && r.status !== 'late'), 'act-card');
   setAttn('meds', rows.some((r) => r.overdue && !['taken', 'late', 'missed'].includes(r.status)));
@@ -4025,8 +4133,8 @@ export function renderMedsCard() {
 }
 function openMedManage() {
   const plans = Object.entries(medPlans()).filter(([, p]) => !p.removed).sort((a, b) => a[1].name.localeCompare(b[1].name)); const t = today();
-  openSheet('Medicines', `${plans.length ? `<div class="card kv-card">${plans.map(([id, p]) => `<div class="kv helper-row"><span><b>${esc(p.name)}</b><small>${esc([p.dose, p.times.length ? p.times.map(fmtTime).join(', ') : 'as needed', p.end && p.end < t ? `stopped ${fmtDayShort(p.end)}` : ''].filter(Boolean).join(' · '))}</small>${listedHTML(p.name)}</span><span class="mini-links"><button type="button" data-medit="${esc(id)}">Edit</button></span></div>`).join('')}</div>` : '<p class="hint">No medicines yet.</p>'}
-    <button type="button" class="btn dark block mt10" data-act="med-add">Add a medicine</button>
+  openSheet('Medicines and supplements', `${plans.length ? `<div class="card kv-card">${plans.map(([id, p]) => `<div class="kv helper-row"><span><b>${esc(p.name)}</b><small>${esc([p.kind === 'supplement' ? 'Supplement' : '', p.dose, p.times.length ? p.times.map(fmtTime).join(', ') : 'as needed', p.end && p.end < t ? `stopped ${fmtDayShort(p.end)}` : ''].filter(Boolean).join(' · '))}</small>${listedHTML(p.name)}</span><span class="mini-links"><button type="button" data-medit="${esc(id)}">Edit</button></span></div>`).join('')}</div>` : '<p class="hint">No medicines yet.</p>'}
+    <button type="button" class="btn dark block mt10" data-act="med-add">Add a medicine or supplement</button>
     <p class="hint">Shared with everyone using this log. Little One records and shows patterns. It doesn't give advice about starting, stopping or changing a medicine. Talk to the prescriber about that.</p>`, {
     onMount: (b) => { b.onclick = (ev) => { const x = ev.target.closest('button'); if (!x) return; if (x.dataset.medit) openMedSheet(x.dataset.medit); else if (x.dataset.act === 'med-add') openMedSheet(null); }; },
   });
@@ -4038,8 +4146,10 @@ function listedHTML(name) {
 function openMedSheet(id) {
   const plans = medPlans(); const cur = id ? plans[id] : null; let days = cur ? cur.days.slice() : [];
   const timeInputs = [0, 1, 2, 3].map((i) => `<input class="input" type="time" id="mp-t${i}" aria-label="Time ${i + 1}" value="${esc(cur && cur.times[i] ? cur.times[i] : '')}">`).join('');
-  openSheet(cur ? 'Edit medicine' : 'Add a medicine', `
-    <div class="field"><label class="label" for="mp-name">Medicine</label><input class="input" id="mp-name" maxlength="60" autocomplete="off" placeholder="e.g. Melatonin" value="${esc(cur ? cur.name : '')}"></div>
+  let kind = cur ? cur.kind : 'medicine';
+  openSheet(cur ? `Edit ${cur.kind === 'supplement' ? 'supplement' : 'medicine'}` : 'Add a medicine or supplement', `
+    <div class="field"><span class="label">Type</span><div class="chips">${[['medicine', 'Medicine'], ['supplement', 'Supplement']].map(([k, l]) => `<button type="button" class="chip" data-mkindp="${k}" aria-pressed="${kind === k}">${l}</button>`).join('')}</div></div>
+    <div class="field"><label class="label" for="mp-name">Name</label><input class="input" id="mp-name" maxlength="60" autocomplete="off" placeholder="e.g. Melatonin" value="${esc(cur ? cur.name : '')}"></div>
     <div class="field"><label class="label" for="mp-dose">Dose</label><input class="input" id="mp-dose" maxlength="60" autocomplete="off" placeholder="e.g. 2 mg" value="${esc(cur ? cur.dose : '')}"></div>
     ${cur ? `<div class="field" id="mp-changewrap"><label class="label" for="mp-changed">If the dose changed, from</label><input class="input" type="date" id="mp-changed" max="${today()}" value="${today()}"><p class="hint">Used only when you change the dose above. The change is marked on your charts.</p></div>` : ''}
     <div class="field"><span class="label">Times each day</span><div class="row2 time-grid">${timeInputs}</div><p class="hint">Leave all blank for "as needed".</p></div>
@@ -4054,6 +4164,7 @@ function openMedSheet(id) {
     onMount: (b) => {
       b.onclick = async (ev) => {
         const btn = ev.target.closest('button'); if (!btn) return;
+        if (btn.dataset.mkindp) { kind = btn.dataset.mkindp; $$('[data-mkindp]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === btn))); return; }
         if (btn.dataset.mday) { const d = +btn.dataset.mday; days = days.includes(d) ? days.filter((x) => x !== d) : [...days, d]; btn.setAttribute('aria-pressed', String(days.includes(d))); return; }
         const all = medPlans(); const done = () => { closeSheet(); renderMedsCard(); renderOutlook(); openMedManage(); if (S.tab === 'insights') renderInsights(); };
         if (btn.dataset.act === 'mp-stop' && id) { all[id] = { ...all[id], end: today(), updatedAt: Date.now() }; await savePlans(all); done(); return; }
@@ -4067,10 +4178,10 @@ function openMedSheet(id) {
         }
         if (btn.dataset.act !== 'mp-save') return;
         const name = $('#mp-name', b).value.trim(); const dose = $('#mp-dose', b).value.trim();
-        if (!name) return showMsg($('#mp-msg', b), 'warn', 'Add the medicine name.');
+        if (!name) return showMsg($('#mp-msg', b), 'warn', 'Add the name.');
         const times = [0, 1, 2, 3].map((i) => $(`#mp-t${i}`, b).value).filter(Boolean);
         const start = $('#mp-start', b).value || today();
-        const next = { ...(cur || {}), name, dose, times, days, notes: $('#mp-notes', b).value.trim(), start, carers: $('#mp-carers', b).checked, retest: $('#mp-retest', b).value || '', retestLabel: $('#mp-retestl', b).value.trim().slice(0, 40), end: cur ? cur.end : '', history: cur ? cur.history.slice() : [], removed: false, updatedAt: Date.now() };
+        const next = { ...(cur || {}), kind, name, dose, times, days, notes: $('#mp-notes', b).value.trim(), start, carers: $('#mp-carers', b).checked, retest: $('#mp-retest', b).value || '', retestLabel: $('#mp-retestl', b).value.trim().slice(0, 40), end: cur ? cur.end : '', history: cur ? cur.history.slice() : [], removed: false, updatedAt: Date.now() };
         if (cur && dose && dose !== cur.dose) { const cd = $('#mp-changed', b).value || today(); next.history.push({ date: cd > today() ? today() : cd, dose }); }
         all[id || Sync.randomId(9)] = next; await savePlans(all); done(); toast(cur && dose !== cur.dose ? 'Saved. Dose change marked.' : 'Saved');
       };
@@ -4457,6 +4568,7 @@ async function init() {
   registerSW();
   setupFolds();
   watchIcons(document.body);
+  const lb = $('#log-back'); if (lb) lb.onclick = () => { S.fromTile = false; switchTab('today'); };
   setInterval(() => { try { if (document.visibilityState === 'visible' && $('#app').dataset.screen === 'main' && S.tab === 'today') { renderRoutineCard(); renderApptCard(); renderToday(); } } catch (e) { /* ignore */ } }, 60000);
 
   document.addEventListener('click', (ev) => {

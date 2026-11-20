@@ -1,5 +1,5 @@
 {
-  "version": "1.27.0",
+  "version": "1.28.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -136,6 +136,10 @@
     {
       "date": "2026-11-19",
       "notes": "1.27.0 Time with people (who looked after them, played, one-on-one, stays at someone's place, with start and end; carers can log it too). How they ate: one tap for the day plus meals and snacks with how much was eaten. A Day breakdown timeline on Today, and a Day breakdown button on each day in History. The outlook no longer nags about unlogged food and now uses time with people gently. Today so far groups the day cards. Emoji replaced with one set of rounded line icons. Settings has jump links at the top."
+    },
+    {
+      "date": "2026-11-21",
+      "notes": "1.28.0 New Today screen: Now (only what needs you), Log tiles, the day timeline, and Worth knowing. The Log tab is gone; each tile opens a short sheet or the log form and comes back to Today after saving. Choose and order your own tiles (saved per phone); everything else is under More. Medicines and supplements are one place, each marked as a medicine or a supplement. Eating notes link from Ate."
     }
   ]
 }

@@ -1,5 +1,5 @@
 {
-  "version": "1.28.0",
+  "version": "1.29.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -140,6 +140,10 @@
     {
       "date": "2026-11-21",
       "notes": "1.28.0 New Today screen: Now (only what needs you), Log tiles, the day timeline, and Worth knowing. The Log tab is gone; each tile opens a short sheet or the log form and comes back to Today after saving. Choose and order your own tiles (saved per phone); everything else is under More. Medicines and supplements are one place, each marked as a medicine or a supplement. Eating notes link from Ate."
+    },
+    {
+      "date": "2026-11-21",
+      "notes": "1.29.0 Slimmer log tiles: 11 of your choice plus More. Medicines and supplements can be filled in from saved supplements (name, amount, contents). Each can have backups, with a Gave backup button and an Out of stock switch. Supplements given from the plan are also logged as supplements, so nutrient totals include them; a backup with the same nutrient counts toward the retest."
     }
   ]
 }

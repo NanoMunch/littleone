@@ -12,6 +12,19 @@ const dow = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date
 const mins = (hhmm) => { const m = /^(\d{1,2}):(\d{2})/.exec(hhmm || ''); return m ? +m[1] * 60 + +m[2] : null; };
 
 // Cleans one plan item. times: sorted unique HH:MM (empty means "as needed"). days: weekdays 0-6 (empty means every day).
+const txt = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
+// A saved supplement or medicine item: name, amount, and what's in it, as recorded in the log.
+export function cleanItem(i) {
+  if (!i || typeof i !== 'object') return null;
+  const med = txt(i.med, 60); if (!med) return null;
+  const contents = (Array.isArray(i.contents) ? i.contents : []).map((c) => ({ name: txt(c && c.name, 40), amount: txt(c && c.amount, 30) })).filter((c) => c.name).slice(0, 20);
+  return { med, dose: txt(i.dose, 60), contents, product: txt(i.product, 40), units: txt(i.units, 20) };
+}
+// Does a backup give any of the same things as the main item (e.g. iron for iron)? With nothing recorded for the main item, yes.
+export function sameNutrient(main, backup) {
+  if (!backup) return false; const a = (main && main.contents) || []; if (!a.length) return true;
+  const names = new Set(a.map((c) => c.name.toLowerCase())); return (backup.contents || []).some((c) => names.has(c.name.toLowerCase()));
+}
 export function cleanPlan(x) {
   if (!x || typeof x !== 'object') return null;
   const name = String(x.name || '').trim().slice(0, 60); if (!name) return null;
@@ -19,7 +32,7 @@ export function cleanPlan(x) {
   const days = Array.from(new Set((Array.isArray(x.days) ? x.days : []).map(Number).filter((d) => d >= 0 && d <= 6))).sort();
   const date = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : '');
   const history = (Array.isArray(x.history) ? x.history : []).map((h) => ({ date: date(h && h.date), dose: String((h && h.dose) || '').trim().slice(0, 60) })).filter((h) => h.date && h.dose).slice(-30);
-  return { name, dose: String(x.dose || '').trim().slice(0, 60), times, days, notes: String(x.notes || '').trim().slice(0, 200), start: date(x.start), end: date(x.end), carers: !!x.carers, kind: x.kind === 'supplement' ? 'supplement' : 'medicine', retest: date(x.retest), retestLabel: String(x.retestLabel || '').trim().slice(0, 40), history, removed: !!x.removed, updatedAt: +x.updatedAt || 0 };
+  return { name, dose: String(x.dose || '').trim().slice(0, 60), times, days, notes: String(x.notes || '').trim().slice(0, 200), start: date(x.start), end: date(x.end), carers: !!x.carers, kind: x.kind === 'supplement' ? 'supplement' : 'medicine', retest: date(x.retest), retestLabel: String(x.retestLabel || '').trim().slice(0, 40), history, item: cleanItem(x.item), backups: (Array.isArray(x.backups) ? x.backups : []).map(cleanItem).filter(Boolean).slice(0, 4), oos: !!x.oos, removed: !!x.removed, updatedAt: +x.updatedAt || 0 };
 }
 export function cleanPlans(m) {
   const out = {};
@@ -49,7 +62,7 @@ export function doseId(planId, date, slot) {
   return h.toString(16).padStart(8, '0') + planId.slice(0, 10);
 }
 
-// doses: entries { planId, date, slot, status: 'taken'|'late'|'missed' }.
+// doses: entries { planId, date, slot, status: 'taken'|'late'|'backup'|'missed' }. A backup counts as given.
 export function statusMap(doses) { const m = new Map(); for (const d of doses) m.set(`${d.planId}|${d.date}|${d.slot}`, d); return m; }
 
 // Today's rows: every scheduled slot with its status, and how overdue (minutes) when nothing is logged yet.
@@ -111,7 +124,7 @@ export function missedLink(plans, doses, ratings, todayStr, days = 60) {
   for (let i = 1; i <= days; i++) {
     const date = addDays(todayStr, -i); if (!ratings.has(date)) continue;
     let any = false; let off = false;
-    for (const [id, p] of Object.entries(plans)) for (const slot of slotsFor(p, date)) { const d = sm.get(`${id}|${date}|${slot}`); if (!d) continue; any = true; if (d.status !== 'taken') off = true; }
+    for (const [id, p] of Object.entries(plans)) for (const slot of slotsFor(p, date)) { const d = sm.get(`${id}|${date}|${slot}`); if (!d) continue; any = true; if (d.status !== 'taken' && d.status !== 'backup') off = true; }
     if (!any) continue;
     (off ? bad : good).push(ratings.get(date));
   }
@@ -141,7 +154,7 @@ export function retestInfo(p, id, doses, today) {
   let sched = 0; let given = 0;
   for (let d = from; d <= today; d = addDays(d, 1)) {
     const slots = slotsFor(p, d); if (!slots.length) continue;
-    const got = doses.some((x) => x.planId === id && x.date === d && (x.status === 'taken' || x.status === 'late'));
+    const got = doses.some((x) => x.planId === id && x.date === d && (x.status === 'taken' || x.status === 'late' || (x.status === 'backup' && x.sameNut !== false)));
     if (d === today && !got) continue;
     sched++; if (got) given++;
   }

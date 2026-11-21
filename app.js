@@ -7,12 +7,12 @@ import { cleanHome, mergeHome, variantFor, stepStatus, routineWeek, occurrences,
 import { DETAILS, DETAIL_NUMS, cleanDetail, cleanNum, hasDetail as hasMoment, detailText, detailTitle, momentCards, tallyStats, tallyNotes } from './moments.js';
 import { watchIcons } from './icons.js';
 import { WITH_KINDS, PORTIONS, EAT_LEVELS, cleanWith, eatLevel, meals as mealsOf, breakdown as dayBreakdown, withMins, withTotals, withNotes } from './daylog.js';
-import { EFFECTS, DAY_NAMES, retestInfo, reminderIcs, slotsFor, cleanPlans, mergePlans, activeOn, isPrn, doseId, todayRows, adherence, changePoints, beforeAfter, missedLink, effectCounts } from './meds.js';
+import { EFFECTS, DAY_NAMES, retestInfo, reminderIcs, slotsFor, cleanPlans, mergePlans, activeOn, isPrn, doseId, todayRows, cleanItem, sameNutrient, adherence, changePoints, beforeAfter, missedLink, effectCounts } from './meds.js';
 import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.28.0';
+export const APP_VERSION = '1.29.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -679,13 +679,13 @@ function tileDefs() {
   if (isHelper()) Object.keys(d).forEach((k) => { if (d[k].parent) delete d[k]; });
   return d;
 }
-const TILE_DEFAULT = ['ate', 'sleep', 'played', 'with', 'meds', 'mood', 'unwell'];
-const TILE_DEFAULT_HELPER = ['sleep', 'with', 'routine', 'plans', 'unwell', 'cat:behaviour', 'cat:win'];
+const TILE_DEFAULT = ['ate', 'sleep', 'played', 'with', 'meds', 'mood', 'unwell', 'cat:tantrum', 'cat:behaviour', 'screen', 'cat:win'];
+const TILE_DEFAULT_HELPER = ['sleep', 'with', 'routine', 'plans', 'unwell', 'cat:behaviour', 'cat:win', 'cat:tantrum'];
 function chosenTiles() {
   const d = tileDefs(); let list = null;
   try { list = JSON.parse(localStorage.getItem(isHelper() ? 'lo-tiles-h' : 'lo-tiles') || 'null'); } catch { /* ignore */ }
   if (!Array.isArray(list)) list = isHelper() ? TILE_DEFAULT_HELPER : TILE_DEFAULT;
-  return list.filter((k) => d[k]).slice(0, 7);
+  return list.filter((k) => d[k]).slice(0, 11);
 }
 function saveTiles(list) { try { localStorage.setItem(isHelper() ? 'lo-tiles-h' : 'lo-tiles', JSON.stringify(list)); } catch { /* ignore */ } }
 function tileBtn(k, t) { return `<button type="button" class="tile" data-tile="${esc(k)}"><span class="tile-ic" aria-hidden="true">${t.em}</span><span>${esc(t.short || t.label)}</span></button>`; }
@@ -729,9 +729,9 @@ function openMoreTiles() {
 function openTileEditor() {
   const d = tileDefs(); let list = chosenTiles();
   const draw = () => {
-    $('#sheet-body').innerHTML = `<p class="hint">Up to 7 tiles, plus More. Use the arrows to change the order.</p>
+    $('#sheet-body').innerHTML = `<p class="hint">Up to 11 tiles, plus More. Use the arrows to change the order.</p>
       <ol class="tile-edit">${list.map((k, i) => `<li><span>${d[k].em} ${esc(d[k].label)}</span><span class="act-btns"><button type="button" class="chip" data-tup="${i}" aria-label="Move up"${i ? '' : ' disabled'}>↑</button><button type="button" class="chip" data-tdown="${i}" aria-label="Move down"${i < list.length - 1 ? '' : ' disabled'}>↓</button><button type="button" class="chip" data-toff="${esc(k)}">Remove</button></span></li>`).join('')}</ol>
-      <h4 class="feel-sub">Add a tile</h4><div class="chips">${Object.keys(d).filter((k) => !list.includes(k)).map((k) => `<button type="button" class="chip" data-ton="${esc(k)}"${list.length >= 7 ? ' disabled' : ''}>${d[k].em} ${esc(d[k].label)}</button>`).join('')}</div>
+      <h4 class="feel-sub">Add a tile</h4><div class="chips">${Object.keys(d).filter((k) => !list.includes(k)).map((k) => `<button type="button" class="chip" data-ton="${esc(k)}"${list.length >= 11 ? ' disabled' : ''}>${d[k].em} ${esc(d[k].label)}</button>`).join('')}</div>
       <div class="actions mt10"><button type="button" class="btn primary" data-act="tiles-save">Save</button><button type="button" class="btn ghost" data-act="tiles-reset">Back to the usual set</button></div>`;
   };
   openSheet('Choose my tiles', ''); draw();
@@ -740,7 +740,7 @@ function openTileEditor() {
     if (ds.tup) { const i = +ds.tup; [list[i - 1], list[i]] = [list[i], list[i - 1]]; draw(); }
     else if (ds.tdown) { const i = +ds.tdown; [list[i + 1], list[i]] = [list[i], list[i + 1]]; draw(); }
     else if (ds.toff) { list = list.filter((x) => x !== ds.toff); draw(); }
-    else if (ds.ton && list.length < 7) { list.push(ds.ton); draw(); }
+    else if (ds.ton && list.length < 11) { list.push(ds.ton); draw(); }
     else if (ds.act === 'tiles-reset') { list = (isHelper() ? TILE_DEFAULT_HELPER : TILE_DEFAULT).slice(); draw(); }
     else if (ds.act === 'tiles-save') { saveTiles(list); closeSheet(); renderTiles(); toast('Tiles saved on this phone'); }
   };
@@ -4095,10 +4095,22 @@ const medPlans = () => cleanPlans(S.profile.meds);
 const medDoses = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.cat === 'meddose' && e.planId && e.date && e.slot);
 const sidefxEntries = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.cat === 'sidefx' && e.date && Array.isArray(e.effects));
 async function savePlans(map) { S.profile = { ...S.profile, meds: cleanPlans(map), updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(300); }
-async function setDose(planId, date, slot, status) {
+async function setDose(planId, date, slot, status, extra = {}) {
   const id = doseId(planId, date, slot); const cur = S.entries.get(id); const now = Date.now();
-  if (cur && !cur.deleted && cur.status === status) { await saveActivity({ id, deleted: true, updatedAt: now, by: S.myName || '' }); return; }
-  await saveActivity({ id, createdAt: cur && cur.createdAt ? cur.createdAt : now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, cat: 'meddose', planId, date, slot, status, takenAt: status === 'missed' ? '' : nowHHMM(), tod: todForTime(slot) || 'Morning', title: '', notes: '', sev: 0, src: 'parent', srcName: S.myName || 'Me' });
+  const p = medPlans()[planId];
+  if (cur && !cur.deleted && cur.status === status && (status !== 'backup' || cur.backupIdx === extra.backupIdx)) { await saveActivity({ id, deleted: true, updatedAt: now, by: S.myName || '' }); await linkDoseLog(id, null); return; }
+  const takenAt = status === 'missed' ? '' : nowHHMM();
+  const bk = status === 'backup' && p ? p.backups[extra.backupIdx] : null;
+  await saveActivity({ id, createdAt: cur && cur.createdAt ? cur.createdAt : now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, cat: 'meddose', planId, date, slot, status, backupIdx: bk ? extra.backupIdx : undefined, backupName: bk ? bk.med : undefined, sameNut: bk ? sameNutrient(p.item, bk) : undefined, takenAt, tod: todForTime(slot) || 'Morning', title: '', notes: '', sev: 0, src: 'parent', srcName: S.myName || 'Me', date });
+  // A supplement given from the plan also goes in the log as a supplement, so nutrient totals and checks include it.
+  const item = !p || p.kind !== 'supplement' || status === 'missed' ? null : bk || p.item || { med: p.name, dose: p.dose, contents: [], product: '', units: '' };
+  await linkDoseLog(id, item ? { item, date, time: takenAt, planId } : null);
+}
+async function linkDoseLog(doseIdStr, info) {
+  const lid = `${doseIdStr}l`; const cur = S.entries.get(lid); const now = Date.now();
+  if (!info) { if (cur && !cur.deleted) await saveActivity({ id: lid, deleted: true, updatedAt: now, by: S.myName || '' }); return; }
+  const it = info.item;
+  await saveActivity({ id: lid, createdAt: cur && cur.createdAt ? cur.createdAt : now, updatedAt: now, by: S.myName || '', byDev: S.deviceId, cat: 'supplement', med: it.med, dose: it.dose, contents: it.contents || [], product: it.product || '', units: it.units || '', title: '', notes: 'From the daily plan', sev: 0, src: 'parent', srcName: S.myName || 'Me', date: info.date, time: info.time, tod: todForTime(info.time) || 'Morning', fromPlan: info.planId });
 }
 const nowMin = () => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); };
 export function renderMedsCard() {
@@ -4110,8 +4122,8 @@ export function renderMedsCard() {
   const doses = medDoses(); const rows = todayRows(active, doses.filter((d) => d.date === t), t, nowMin());
   const prn = Object.entries(active).filter(([, p]) => isPrn(p));
   const stat = [['taken', 'Taken'], ['late', 'Late'], ['missed', 'Missed']];
-  const rowHTML = rows.map((r) => `<div class="med-row"><div class="med-name"><b>💊 ${esc(r.plan.name)}</b><small>${esc([r.plan.dose, fmtTime(r.slot)].filter(Boolean).join(' · '))}${r.overdue ? ` · due ${r.overdue >= 60 ? fmtDur(r.overdue) : `${r.overdue} min`} ago` : ''}</small>${r.dose ? `<small>${r.status === 'missed' ? 'Missed' : r.status === 'late' ? 'Given late' : 'Taken'}${r.dose.takenAt ? ` at ${esc(fmtTime(r.dose.takenAt))}` : ''} · ${esc(r.dose.srcName || r.dose.by || '')}</small>` : ''}</div>
-    <div class="act-btns">${stat.map(([k, l]) => `<button type="button" class="chip" data-dose="${esc(r.id)}|${r.slot}|${k}" aria-pressed="${r.status === k}">${l}</button>`).join('')}</div></div>`).join('');
+  const rowHTML = rows.map((r) => `<div class="med-row"><div class="med-name"><b>💊 ${esc(r.plan.name)}</b><small>${esc([r.plan.dose, fmtTime(r.slot)].filter(Boolean).join(' · '))}${r.overdue ? ` · due ${r.overdue >= 60 ? fmtDur(r.overdue) : `${r.overdue} min`} ago` : ''}</small>${r.dose ? `<small>${r.status === 'missed' ? 'Missed' : r.status === 'late' ? 'Given late' : r.status === 'backup' ? `Gave backup${r.dose.backupName ? `: ${esc(r.dose.backupName)}` : ''}` : 'Taken'}${r.dose.takenAt ? ` at ${esc(fmtTime(r.dose.takenAt))}` : ''} · ${esc(r.dose.srcName || r.dose.by || '')}</small>` : ''}</div>
+    <div class="act-btns">${stat.map(([k, l]) => `<button type="button" class="chip" data-dose="${esc(r.id)}|${r.slot}|${k}" aria-pressed="${r.status === k}">${l}</button>`).join('')}${r.plan.backups.length ? `<button type="button" class="chip${r.plan.oos ? ' chip-hi' : ''}" data-bkp="${esc(r.id)}|${r.slot}" aria-pressed="${r.status === 'backup'}">Gave backup</button>` : ''}</div>${r.plan.oos ? `<small class="med-oos">Out of stock${r.plan.backups.length ? `, so the backup (${esc(r.plan.backups[0].med)}) is the one to give` : ''}.</small>` : ''}</div>`).join('');
   const prnHTML = prn.map(([id, p]) => { const given = doses.filter((d) => d.planId === id && d.date === t).sort((a, b) => (a.takenAt || '').localeCompare(b.takenAt || '')); return `<div class="med-row"><div class="med-name"><b>💊 ${esc(p.name)}</b><small>${esc([p.dose, 'as needed'].filter(Boolean).join(' · '))}${given.length ? ` · given ${given.length} time${given.length === 1 ? '' : 's'} today, last at ${esc(fmtTime(given[given.length - 1].takenAt || given[given.length - 1].slot))}` : ''}</small></div><div class="act-btns"><button type="button" class="chip" data-prn="${esc(id)}">Give now</button></div></div>`; }).join('');
   const off = rows.filter((r) => r.status === 'missed').length; const late = rows.filter((r) => r.status === 'late').length;
   const goalHTML = Object.entries(active).map(([id, p]) => { const r = retestInfo(p, id, doses, t); return r ? `<p class="med-goal"><b>${esc(r.head)}</b> ${esc(r.line)}${r.tally ? ` <small>${esc(r.tally)}</small>` : ''}</p>` : ''; }).join('');
@@ -4120,12 +4132,17 @@ export function renderMedsCard() {
   const msum = (rows.length ? `${given} of ${rows.length} given${off ? ` · ${off} missed` : ''}` : 'As needed only') + (nextGoal ? ` · ${nextGoal.short}` : '');
   box.innerHTML = foldCard('meds', 'Medicines and supplements', msum, `${rowHTML}${prnHTML}${goalHTML}
     ${off ? '<p class="hint">A dose was missed. Noting how the day goes helps show whether it made a difference.</p>' : late ? '<p class="hint">A dose was given late today.</p>' : ''}
-    <div class="act-btns mt10"><button type="button" class="chip" data-act="med-effect">Note an effect</button><button type="button" class="chip" data-act="med-manage">Manage medicines</button></div>`, rows.some((r) => r.overdue && r.status !== 'taken' && r.status !== 'late'), 'act-card');
+    <div class="act-btns mt10"><button type="button" class="chip" data-act="med-effect">Note an effect</button><button type="button" class="chip" data-act="med-manage">Manage the list</button></div>`, rows.some((r) => r.overdue && r.status !== 'taken' && r.status !== 'late'), 'act-card');
   setAttn('meds', rows.some((r) => r.overdue && !['taken', 'late', 'missed'].includes(r.status)));
   box.onclick = async (ev) => {
     const b = ev.target.closest('button'); if (!b) return;
     const refresh = () => { renderMedsCard(); renderOutlook(); if (S.tab === 'insights') renderInsights(); };
     if (b.dataset.dose) { const [id, slot, st] = b.dataset.dose.split('|'); await setDose(id, today(), slot, st); refresh(); }
+    else if (b.dataset.bkp) {
+      const [id, slot] = b.dataset.bkp.split('|'); const p = medPlans()[id]; if (!p) return;
+      if (p.backups.length === 1) { await setDose(id, today(), slot, 'backup', { backupIdx: 0 }); refresh(); toast(`Logged ${p.backups[0].med}`); return; }
+      openSheet('Which backup?', `<div class="chips">${p.backups.map((x, i) => `<button type="button" class="chip" data-bki="${i}">${esc([x.med, x.dose].filter(Boolean).join(', '))}</button>`).join('')}</div>`, { onMount: (sb) => { sb.onclick = async (e2) => { const c = e2.target.closest('[data-bki]'); if (!c) return; closeSheet(); await setDose(id, today(), slot, 'backup', { backupIdx: +c.dataset.bki }); refresh(); toast(`Logged ${p.backups[+c.dataset.bki].med}`); }; } });
+    }
     else if (b.dataset.prn) { await setDose(b.dataset.prn, today(), nowHHMM(), 'taken'); refresh(); toast('Dose logged'); }
     else if (b.dataset.act === 'med-effect') openEffectSheet();
     else if (b.dataset.act === 'med-manage') openMedManage();
@@ -4133,7 +4150,7 @@ export function renderMedsCard() {
 }
 function openMedManage() {
   const plans = Object.entries(medPlans()).filter(([, p]) => !p.removed).sort((a, b) => a[1].name.localeCompare(b[1].name)); const t = today();
-  openSheet('Medicines and supplements', `${plans.length ? `<div class="card kv-card">${plans.map(([id, p]) => `<div class="kv helper-row"><span><b>${esc(p.name)}</b><small>${esc([p.kind === 'supplement' ? 'Supplement' : '', p.dose, p.times.length ? p.times.map(fmtTime).join(', ') : 'as needed', p.end && p.end < t ? `stopped ${fmtDayShort(p.end)}` : ''].filter(Boolean).join(' · '))}</small>${listedHTML(p.name)}</span><span class="mini-links"><button type="button" data-medit="${esc(id)}">Edit</button></span></div>`).join('')}</div>` : '<p class="hint">No medicines yet.</p>'}
+  openSheet('Medicines and supplements', `${plans.length ? `<div class="card kv-card">${plans.map(([id, p]) => `<div class="kv helper-row"><span><b>${esc(p.name)}</b><small>${esc([p.kind === 'supplement' ? 'Supplement' : '', p.oos ? 'Out of stock' : '', p.dose, p.times.length ? p.times.map(fmtTime).join(', ') : 'as needed', p.end && p.end < t ? `stopped ${fmtDayShort(p.end)}` : ''].filter(Boolean).join(' · '))}</small>${listedHTML(p.name)}</span><span class="mini-links"><button type="button" data-medit="${esc(id)}">Edit</button></span></div>`).join('')}</div>` : '<p class="hint">No medicines yet.</p>'}
     <button type="button" class="btn dark block mt10" data-act="med-add">Add a medicine or supplement</button>
     <p class="hint">Shared with everyone using this log. Little One records and shows patterns. It doesn't give advice about starting, stopping or changing a medicine. Talk to the prescriber about that.</p>`, {
     onMount: (b) => { b.onclick = (ev) => { const x = ev.target.closest('button'); if (!x) return; if (x.dataset.medit) openMedSheet(x.dataset.medit); else if (x.dataset.act === 'med-add') openMedSheet(null); }; },
@@ -4147,14 +4164,22 @@ function openMedSheet(id) {
   const plans = medPlans(); const cur = id ? plans[id] : null; let days = cur ? cur.days.slice() : [];
   const timeInputs = [0, 1, 2, 3].map((i) => `<input class="input" type="time" id="mp-t${i}" aria-label="Time ${i + 1}" value="${esc(cur && cur.times[i] ? cur.times[i] : '')}">`).join('');
   let kind = cur ? cur.kind : 'medicine';
+  let item = cur ? cur.item : null; let backups = cur ? cur.backups.slice() : [];
+  const saved = [...savedItems('supplement'), ...savedItems('medication')].map((x) => cleanItem(x)).filter(Boolean);
+  const itemLabel = (x) => [x.med, x.dose].filter(Boolean).join(', ') + (x.contents.length ? ` (${x.contents.map((c) => c.name).join(', ')})` : '');
+  const drawBk = (b) => { const w = $('#mp-bklist', b); if (w) w.innerHTML = backups.length ? backups.map((x, i) => `<div class="kv"><span>${esc(itemLabel(x))}</span><button type="button" class="chip" data-bkdel="${i}">Remove</button></div>`).join('') : '<p class="hint">None yet.</p>'; };
   openSheet(cur ? `Edit ${cur.kind === 'supplement' ? 'supplement' : 'medicine'}` : 'Add a medicine or supplement', `
     <div class="field"><span class="label">Type</span><div class="chips">${[['medicine', 'Medicine'], ['supplement', 'Supplement']].map(([k, l]) => `<button type="button" class="chip" data-mkindp="${k}" aria-pressed="${kind === k}">${l}</button>`).join('')}</div></div>
+    ${saved.length ? `<div class="field"><span class="label">Fill in from a saved item</span><div class="chips">${saved.map((x, i) => `<button type="button" class="chip" data-mpick="${i}" aria-pressed="${!!(item && item.med === x.med && item.dose === x.dose)}">${esc([x.med, x.dose].filter(Boolean).join(', '))}</button>`).join('')}</div><p class="hint">Uses the name, amount and what's in it from your log.</p></div>` : ''}
     <div class="field"><label class="label" for="mp-name">Name</label><input class="input" id="mp-name" maxlength="60" autocomplete="off" placeholder="e.g. Melatonin" value="${esc(cur ? cur.name : '')}"></div>
     <div class="field"><label class="label" for="mp-dose">Dose</label><input class="input" id="mp-dose" maxlength="60" autocomplete="off" placeholder="e.g. 2 mg" value="${esc(cur ? cur.dose : '')}"></div>
     ${cur ? `<div class="field" id="mp-changewrap"><label class="label" for="mp-changed">If the dose changed, from</label><input class="input" type="date" id="mp-changed" max="${today()}" value="${today()}"><p class="hint">Used only when you change the dose above. The change is marked on your charts.</p></div>` : ''}
     <div class="field"><span class="label">Times each day</span><div class="row2 time-grid">${timeInputs}</div><p class="hint">Leave all blank for "as needed".</p></div>
     <div class="field"><span class="label">Days</span><div class="chips" data-mdays>${[1, 2, 3, 4, 5, 6, 0].map((d) => `<button type="button" class="chip" data-mday="${d}" aria-pressed="${days.includes(d)}">${DAY_NAMES[d]}</button>`).join('')}</div><p class="hint">Leave all unselected for every day.</p></div>
     <div class="field"><label class="label" for="mp-start">Started on</label><input class="input" type="date" id="mp-start" max="${today()}" value="${esc(cur ? cur.start : today())}"></div>
+    <div class="field"><span class="label">Backup (optional)</span><p class="hint">Something to give instead if this one is too hard on the day or you've run out.</p><div id="mp-bklist"></div>
+      ${saved.length ? `<div class="chips mt10">${saved.map((x, i) => `<button type="button" class="chip" data-bkadd="${i}">+ ${esc([x.med, x.dose].filter(Boolean).join(', '))}</button>`).join('')}</div>` : '<p class="hint">Log a supplement once and it can be picked here.</p>'}</div>
+    <label class="check"><input type="checkbox" id="mp-oos"${cur && cur.oos ? ' checked' : ''}> Out of stock for now (the backup is suggested until you untick this)</label>
     <label class="check"><input type="checkbox" id="mp-carers"${cur && cur.carers ? ' checked' : ''}> Show carers this medicine and its times (family members you share the plan with)</label>
     <div class="field"><label class="label" for="mp-retest">Check or retest on (optional)</label><div class="row2"><input class="input" type="date" id="mp-retest" min="${today()}" value="${esc(cur ? cur.retest : '')}" aria-label="Retest date"><input class="input" id="mp-retestl" maxlength="40" autocomplete="off" placeholder="e.g. Iron retest" value="${esc(cur ? cur.retestLabel : '')}" aria-label="What it is for"></div><p class="hint">Shows a gentle countdown and a daily encouragement on the Medicines card.</p>${cur && cur.retest && cur.times.length ? '<button type="button" class="btn ghost block" data-act="mp-ics">Add a daily reminder to my calendar</button>' : ''}</div>
     <div class="field"><label class="label" for="mp-notes">Notes (optional)</label><input class="input" id="mp-notes" maxlength="200" autocomplete="off" placeholder="e.g. with food" value="${esc(cur ? cur.notes : '')}"></div>
@@ -4162,8 +4187,12 @@ function openMedSheet(id) {
     <button type="button" class="btn primary block" data-act="mp-save">${cur ? 'Save changes' : 'Add'}</button>
     ${cur ? `${!cur.end ? '<button type="button" class="btn ghost block mt10" data-act="mp-stop">Stopped taking it</button>' : '<button type="button" class="btn ghost block mt10" data-act="mp-resume">Started again</button>'}<button type="button" class="btn danger block mt10" data-act="mp-del">Remove from the list</button>` : ''}`, {
     onMount: (b) => {
+      drawBk(b);
       b.onclick = async (ev) => {
         const btn = ev.target.closest('button'); if (!btn) return;
+        if (btn.dataset.mpick) { item = saved[+btn.dataset.mpick]; $('#mp-name', b).value = item.med; $('#mp-dose', b).value = item.dose; $$('[data-mpick]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === btn))); return; }
+        if (btn.dataset.bkadd) { const x = saved[+btn.dataset.bkadd]; if (backups.length < 4 && !backups.some((y) => y.med === x.med && y.dose === x.dose)) backups.push(x); drawBk(b); return; }
+        if (btn.dataset.bkdel) { backups.splice(+btn.dataset.bkdel, 1); drawBk(b); return; }
         if (btn.dataset.mkindp) { kind = btn.dataset.mkindp; $$('[data-mkindp]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === btn))); return; }
         if (btn.dataset.mday) { const d = +btn.dataset.mday; days = days.includes(d) ? days.filter((x) => x !== d) : [...days, d]; btn.setAttribute('aria-pressed', String(days.includes(d))); return; }
         const all = medPlans(); const done = () => { closeSheet(); renderMedsCard(); renderOutlook(); openMedManage(); if (S.tab === 'insights') renderInsights(); };
@@ -4181,7 +4210,8 @@ function openMedSheet(id) {
         if (!name) return showMsg($('#mp-msg', b), 'warn', 'Add the name.');
         const times = [0, 1, 2, 3].map((i) => $(`#mp-t${i}`, b).value).filter(Boolean);
         const start = $('#mp-start', b).value || today();
-        const next = { ...(cur || {}), kind, name, dose, times, days, notes: $('#mp-notes', b).value.trim(), start, carers: $('#mp-carers', b).checked, retest: $('#mp-retest', b).value || '', retestLabel: $('#mp-retestl', b).value.trim().slice(0, 40), end: cur ? cur.end : '', history: cur ? cur.history.slice() : [], removed: false, updatedAt: Date.now() };
+        if (item && item.med !== name) item = null;
+        const next = { ...(cur || {}), kind, item: item ? { ...item, dose: dose || item.dose } : null, backups, oos: $('#mp-oos', b).checked, name, dose, times, days, notes: $('#mp-notes', b).value.trim(), start, carers: $('#mp-carers', b).checked, retest: $('#mp-retest', b).value || '', retestLabel: $('#mp-retestl', b).value.trim().slice(0, 40), end: cur ? cur.end : '', history: cur ? cur.history.slice() : [], removed: false, updatedAt: Date.now() };
         if (cur && dose && dose !== cur.dose) { const cd = $('#mp-changed', b).value || today(); next.history.push({ date: cd > today() ? today() : cd, dose }); }
         all[id || Sync.randomId(9)] = next; await savePlans(all); done(); toast(cur && dose !== cur.dose ? 'Saved. Dose change marked.' : 'Saved');
       };

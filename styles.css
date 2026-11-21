@@ -728,3 +728,10 @@ a.btn { text-decoration: none; }
 .back-btn { background: none; border: 0; color: var(--terracotta, #8a6d1f); font: inherit; padding: 4px 0 12px; cursor: pointer; }
 #now-sec[hidden], #know-sec[hidden] { display: none; }
 #now .card { border-color: #c9962b; }
+
+.tiles .tile { flex-direction: row; justify-content: flex-start; min-height: 44px; padding: 8px 8px; gap: 6px; font-size: .74rem; border-radius: 12px; text-align: left; }
+.tiles .tile-ic { font-size: 1rem; } .tiles .tile-ic .ico { width: 18px; height: 18px; }
+.tiles .tile > span:last-child { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.chip-hi { border-color: #c9962b; background: #fbf3d9; }
+.med-oos { display: block; color: #8a6d1f; margin-top: 4px; }
+.tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } .tiles .tile { min-width: 0; }

@@ -1,5 +1,5 @@
 {
-  "version": "1.30.0",
+  "version": "1.31.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -148,6 +148,10 @@
     {
       "date": "2026-11-21",
       "notes": "1.30.0 Tile icons are colour coded by group (food and play, sleep and screens, mood and behaviour, health and medicines, people and wins), and tiles of a group sit together. Choose my tiles shows the groups and has a Keep colour groups together switch. The day timeline uses the same colours. Tantrum has its own icon."
+    },
+    {
+      "date": "2026-11-21",
+      "notes": "1.31.0 One Medicines and supplements tile that asks Supplements or Medicine. As-needed medicines show time since the last dose and when the next can be given, using the gap and 24-hour limit you copy from the label. On sick days a strip at the top of Today shows dose timers, the last temperature, and a small chart of temperatures and doses with a + to add a reading. Doses and the Unwell tile ask what it is for; unwell days are flagged in History with a sick-day view, and Insights shows how often and what for. Medicines can hold a doctor's dose note, doses left with a running-low warning, and repeats. Settings now has a searchable Updates list, and a note appears after each update."
     }
   ]
 }

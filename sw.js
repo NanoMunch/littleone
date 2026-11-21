@@ -1,6 +1,6 @@
 // Offline support: keeps the app's own files on the phone. It never stores or touches log data,
 // and never caches anything from other sites (requests to GitHub always go straight to the network).
-const VERSION = 'littleone-1.33.2';
+const VERSION = 'littleone-1.33.3';
 const FILES = [
   './', 'index.html', 'styles.css', 'app.js', 'db.js', 'sync.js', 'pdf.js', 'products.js', 'nutrients.js', 'growth.js', 'growthdata.js', 'moves.js', 'me.js', 'meds.js', 'meds-info.js', 'moments.js', 'home.js', 'daylog.js', 'icons.js', 'sick.js', 'food.js', 'BUILDLOG.json', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png', 'icons/favicon-64.png',

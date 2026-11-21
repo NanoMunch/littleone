@@ -14,7 +14,7 @@ import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.33.2';
+export const APP_VERSION = '1.33.3';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -2675,7 +2675,7 @@ function eatAsEntries() {
   const out = []; const brs = schoolCfg().breaks;
   for (const e of S.entries.values()) {
     if (!e || e.deleted || !e.date) continue;
-    if (e.cat === 'eat' && e.kind === 'level' && EAT_LEVELS[e.level]) out.push({ ...e, cat: 'eating', title: `Ate: ${EAT_LEVELS[e.level].toLowerCase()} day`, notes: '', _eat: 1 });
+    if (e.cat === 'eat' && e.kind === 'level' && EAT_LEVELS[e.level]) out.push({ ...e, cat: 'eating', time: '', tod: '', title: `How they ate today: ${EAT_LEVELS[e.level].toLowerCase()}`, notes: '', _eat: 1 });
     else if (e.cat === 'eat' && (e.kind === 'meal' || e.kind === 'snack') && PORTIONS[e.portion]) out.push({ ...e, cat: 'eating', title: `${e.kind === 'snack' ? 'Snack' : 'Meal'}${e.title ? `: ${e.title}` : ''}`, notes: [`${PORTIONS[e.portion]} eaten`, e.notes].filter(Boolean).join('. '), _eat: 1 });
     else if (e.cat === 'lunch' && e.rated) { const br = brs.find((x) => x.id === e.breakId); const it = cleanLunchItems(e.items); out.push({ ...e, cat: 'eating', time: e.time || '', title: `Lunch box${br ? ` (${br.name})` : ''}`, notes: it.map((i) => `${i.name}: ${(EATEN[i.eaten] || 'not rated').toLowerCase()}${i.part ? ` (${i.part})` : ''}`).join(', '), _eat: 1 }); }
   }

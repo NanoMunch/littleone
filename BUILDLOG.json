@@ -1,5 +1,5 @@
 {
-  "version": "1.33.2",
+  "version": "1.33.3",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -168,6 +168,10 @@
     {
       "date": "2026-11-21",
       "notes": "1.33.2 Everything logged with the Ate tile (the day's Low, Usual or Big, and each meal or snack with how much was eaten) and rated lunch boxes now show in History under Eating. Tap one to edit it."
+    },
+    {
+      "date": "2026-11-21",
+      "notes": "1.33.3 In History, the day's Low, Usual or Big eating tap no longer shows the time it was tapped; it reads How they ate today. Meals show only at the meal time."
     }
   ]
 }

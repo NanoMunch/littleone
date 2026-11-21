@@ -14,7 +14,7 @@ import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.33.0';
+export const APP_VERSION = '1.33.1';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -994,7 +994,7 @@ function tileDefs() {
     sleep: { label: 'Slept', em: '🌙', cat: 'sleep' },
     played: { label: 'Played', em: '🏃', card: 'activity-card', parent: true },
     with: { label: 'With someone', em: '👥', card: 'with-card' },
-    meds: { label: 'Medicines and supplements', short: 'Meds and supps', em: '💊', card: 'meds-card', parent: true },
+    meds: { label: 'Medicines and supplements', em: '💊', card: 'meds-card', parent: true },
     mood: { label: 'Mood', em: '🙂', card: 'dayfeel-card', parent: true },
     unwell: { label: 'Unwell', em: '🤒', fn: 'unwell' },
     temp: { label: 'Temperature', em: '🌡', fn: 'temp', parent: true },
@@ -2818,15 +2818,15 @@ function renderHistory() {
   const q = S.hist.q.trim().toLowerCase();
   // By default only the last 24 hours (and today) show; "Show earlier" adds a week at a time. Searching looks through everything.
   const cutoffMs = Date.now() - 86400000; const cutoffDate = addDays(today(), -(S.hist.days - 1));
-  const inWindow = (e) => q || S.hist.days > 99999 || (S.hist.days <= 1 ? (e.date >= today() || toMs(e.date, e.time || '23:59') >= cutoffMs) : e.date >= cutoffDate);
+  const inWindow = (e) => q || S.hist.days > 99999 || (S.hist.days <= 1 ? e.date >= addDays(today(), -2) : e.date >= cutoffDate);
   const matched = all.filter((e) => (S.hist.cat === 'all' || e.cat === S.hist.cat)
     && (!q || [e.title, e.notes, e.med, e.dose, srcLabel(e), e.by, (CAT[e.cat] || {}).label, ...(Array.isArray(e.results) ? e.results.map((r) => r.name) : []), contentsText(e)].join(' ').toLowerCase().includes(q)));
   const list = matched.filter(inWindow); const hiddenOlder = matched.length - list.length;
   const earlierBtn = hiddenOlder > 0 ? `<button type="button" class="btn ghost more-btn" data-earlier>Show earlier (${hiddenOlder} more)</button>` : '';
   const box = $('#entry-list');
   if (!list.length) {
-    box.innerHTML = `<div class="empty"><div class="big" aria-hidden="true">📋</div><p>${hiddenOlder ? 'Nothing in the last 24 hours.' : all.length ? 'Nothing matches that search or filter.' : 'No entries yet. Add the first one from the Log tab.'}</p></div>${earlierBtn}`;
-    box.onclick = (ev) => { if (ev.target.closest('[data-earlier]')) { S.hist.days = S.hist.days <= 1 ? 8 : S.hist.days + 7; renderHistory(); } };
+    box.innerHTML = `<div class="empty"><div class="big" aria-hidden="true">📋</div><p>${hiddenOlder ? 'Nothing in the last couple of days.' : all.length ? 'Nothing matches that search or filter.' : 'No entries yet. Add the first one from the tiles on Today.'}</p></div>${earlierBtn}`;
+    box.onclick = (ev) => { if (ev.target.closest('[data-earlier]')) { S.hist.days = S.hist.days <= 1 ? 10 : S.hist.days + 7; renderHistory(); } };
     return;
   }
   const t = today(); const y = addDays(t, -1);
@@ -2851,7 +2851,7 @@ function renderHistory() {
     const sd = ev.target.closest('[data-sick-day]'); if (sd) { openSickDay(sd.dataset.sickDay); return; }
     const bd = ev.target.closest('[data-bd-day]'); if (bd) { openDayBreakdown(bd.dataset.bdDay); return; }
     if (ev.target.closest('[data-more]')) { S.hist.limit += 60; renderHistory(); return; }
-    if (ev.target.closest('[data-earlier]')) { S.hist.days = S.hist.days <= 1 ? 8 : S.hist.days + 7; renderHistory(); return; }
+    if (ev.target.closest('[data-earlier]')) { S.hist.days = S.hist.days <= 1 ? 10 : S.hist.days + 7; renderHistory(); return; }
     const dc = ev.target.closest('[data-check-day]'); if (dc) { openDayCheck(dc.dataset.checkDay); return; }
     const gh = ev.target.closest('[data-group]');
     if (gh) {

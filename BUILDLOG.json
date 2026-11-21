@@ -1,5 +1,5 @@
 {
-  "version": "1.33.0",
+  "version": "1.33.1",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -160,6 +160,10 @@
     {
       "date": "2026-11-21",
       "notes": "1.33.0 Cleaner Today screen: Worth knowing and the Day breakdown now fold up (tap to open), with their extra headings removed. Logging from a tile (like a one-off supplement) no longer shows the list of areas, just the form for that thing."
+    },
+    {
+      "date": "2026-11-21",
+      "notes": "1.33.1 History opens on the last 48 hours, starting from the beginning of the earliest day shown (so today, yesterday and the day before, in full). Show earlier adds a week at a time. The Medicines and supplements tile label is back to how it was."
     }
   ]
 }

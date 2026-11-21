@@ -1,5 +1,5 @@
 {
-  "version": "1.29.0",
+  "version": "1.30.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -144,6 +144,10 @@
     {
       "date": "2026-11-21",
       "notes": "1.29.0 Slimmer log tiles: 11 of your choice plus More. Medicines and supplements can be filled in from saved supplements (name, amount, contents). Each can have backups, with a Gave backup button and an Out of stock switch. Supplements given from the plan are also logged as supplements, so nutrient totals include them; a backup with the same nutrient counts toward the retest."
+    },
+    {
+      "date": "2026-11-21",
+      "notes": "1.30.0 Tile icons are colour coded by group (food and play, sleep and screens, mood and behaviour, health and medicines, people and wins), and tiles of a group sit together. Choose my tiles shows the groups and has a Keep colour groups together switch. The day timeline uses the same colours. Tantrum has its own icon."
     }
   ]
 }

@@ -41,7 +41,7 @@ const P = {
 };
 const MAP = {
   '🌙': 'moon', '🌑': 'moon', '😴': 'moon', '💊': 'pill', '📝': 'note', '📋': 'note', '💬': 'chat', '📢': 'chat', '🤒': 'thermo', '🌡': 'thermo', '🩺': 'steth',
-  '🌋': 'wave', '🌊': 'wave', '🌪': 'wave', '👤': 'person', '👪': 'people', '👥': 'people', '🤝': 'people', '🏫': 'school', '🎒': 'school',
+  '🌋': 'bolt', '🌊': 'wave', '🌪': 'wave', '👤': 'person', '👪': 'people', '👥': 'people', '🤝': 'people', '🏫': 'school', '🎒': 'school',
   '🤲': 'heart', '💛': 'heart', '💞': 'heart', '🍽': 'plate', '🍎': 'plate', '🥛': 'plate', '🫙': 'plate', '☀': 'sun', '🌅': 'sun', '🌤': 'sun', '🌆': 'sun',
   '🙂': 'flat', '😌': 'smile', '😣': 'frown', '😖': 'sad', '😞': 'sad', '😐': 'flat', '😩': 'sad', '💔': 'sad',
   '🌳': 'leaf', '🌱': 'leaf', '🏃': 'run', '🏊': 'run', '🛁': 'bath', '🪥': 'bath', '📵': 'phone', '📺': 'phone', '🎮': 'phone', '📞': 'phone',

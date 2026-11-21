@@ -735,3 +735,12 @@ a.btn { text-decoration: none; }
 .chip-hi { border-color: #c9962b; background: #fbf3d9; }
 .med-oos { display: block; color: #8a6d1f; margin-top: 4px; }
 .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } .tiles .tile { min-width: 0; }
+
+/* colour groups: icon colour only */
+.tg-food { --tg: #4f7a3a; } .tg-sleep { --tg: #3f5f86; } .tg-mood { --tg: #9a4a4a; } .tg-health { --tg: #8a6d1f; } .tg-people { --tg: #6a4f86; }
+@media (prefers-color-scheme: dark) { .tg-food { --tg: #9cc489; } .tg-sleep { --tg: #92b2da; } .tg-mood { --tg: #e09a9a; } .tg-health { --tg: #d8b55e; } .tg-people { --tg: #b9a1d6; } }
+.tile[class*="tg-"] .tile-ic, .tile[class*="tg-"] .tile-ic .ico, .chip[class*="tg-"] .ico { color: var(--tg); }
+.tg-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--tg, #8a6d1f); margin-right: 7px; vertical-align: 1px; flex: none; }
+.bd-list li .tg-dot { margin-top: 7px; }
+.tiles .tile { flex-direction: column; justify-content: center; align-items: center; text-align: center; gap: 3px; min-height: 54px; padding: 7px 3px; font-size: .72rem; }
+.tiles .tile > span:last-child { -webkit-line-clamp: 2; line-height: 1.15; }

@@ -12,7 +12,7 @@ import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.29.0';
+export const APP_VERSION = '1.30.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -642,7 +642,7 @@ function dayExtras(date) {
 function breakdownHTML(date) {
   const rows = dayBreakdown(allEntries(), date, dayExtras(date));
   if (!rows.length) return '<p class="hint">Nothing logged for this day yet.</p>';
-  return `<ul class="bd-list">${rows.map((r) => `<li class="bd-${r.kind}"><span class="bd-time">${r.time ? esc(fmtTime(r.time)) : ''}${r.to ? `<small>to ${esc(fmtTime(r.to))}</small>` : ''}</span><span class="bd-text">${esc(r.text)}</span></li>`).join('')}</ul>`;
+  return `<ul class="bd-list">${rows.map((r) => `<li class="bd-${r.kind} tg-${{ eat: 'food', act: 'food', scr: 'sleep', rt: 'sleep', med: 'health', with: 'people' }[r.kind] || 'people'}"><span class="tg-dot" aria-hidden="true"></span><span class="bd-time">${r.time ? esc(fmtTime(r.time)) : ''}${r.to ? `<small>to ${esc(fmtTime(r.to))}</small>` : ''}</span><span class="bd-text">${esc(r.text)}</span></li>`).join('')}</ul>`;
 }
 export function renderBreakdownCard() {
   const box = $('#breakdown-card'); if (!box) return;
@@ -679,6 +679,14 @@ function tileDefs() {
   if (isHelper()) Object.keys(d).forEach((k) => { if (d[k].parent) delete d[k]; });
   return d;
 }
+// Colour groups: tiles of a kind sit together and share an icon colour.
+const TILE_GROUPS = ['food', 'sleep', 'mood', 'health', 'people'];
+const GROUP_OF = { ate: 'food', played: 'food', 'cat:eating': 'food', 'cat:selfcare': 'food', sleep: 'sleep', screen: 'sleep', 'cat:sleep': 'sleep', routine: 'sleep',
+  mood: 'mood', taps: 'mood', 'cat:tantrum': 'mood', 'cat:behaviour': 'mood', 'cat:emotion': 'mood',
+  meds: 'health', unwell: 'health', appts: 'health', 'cat:health': 'health', 'cat:medication': 'health', 'cat:supplement': 'health', 'cat:bloodtest': 'health', 'cat:growth': 'health', 'cat:appointment': 'health' };
+const groupOf = (k) => GROUP_OF[k] || 'people';
+const tilesGrouped = () => { try { return localStorage.getItem('lo-tiles-free') !== '1'; } catch { return true; } };
+const orderTiles = (list) => (tilesGrouped() ? TILE_GROUPS.flatMap((g) => list.filter((k) => groupOf(k) === g)) : list);
 const TILE_DEFAULT = ['ate', 'sleep', 'played', 'with', 'meds', 'mood', 'unwell', 'cat:tantrum', 'cat:behaviour', 'screen', 'cat:win'];
 const TILE_DEFAULT_HELPER = ['sleep', 'with', 'routine', 'plans', 'unwell', 'cat:behaviour', 'cat:win', 'cat:tantrum'];
 function chosenTiles() {
@@ -688,11 +696,11 @@ function chosenTiles() {
   return list.filter((k) => d[k]).slice(0, 11);
 }
 function saveTiles(list) { try { localStorage.setItem(isHelper() ? 'lo-tiles-h' : 'lo-tiles', JSON.stringify(list)); } catch { /* ignore */ } }
-function tileBtn(k, t) { return `<button type="button" class="tile" data-tile="${esc(k)}"><span class="tile-ic" aria-hidden="true">${t.em}</span><span>${esc(t.short || t.label)}</span></button>`; }
+function tileBtn(k, t) { return `<button type="button" class="tile tg-${groupOf(k)}" data-tile="${esc(k)}"><span class="tile-ic" aria-hidden="true">${t.em}</span><span>${esc(t.short || t.label)}</span></button>`; }
 function renderTiles() {
   const box = $('#tiles'); if (!box) return;
   const d = tileDefs();
-  box.innerHTML = chosenTiles().map((k) => tileBtn(k, d[k])).join('') + '<button type="button" class="tile" data-tile="more"><span class="tile-ic" aria-hidden="true">•••</span><span>More</span></button>';
+  box.innerHTML = orderTiles(chosenTiles()).map((k) => tileBtn(k, d[k])).join('') + '<button type="button" class="tile" data-tile="more"><span class="tile-ic" aria-hidden="true">•••</span><span>More</span></button>';
   box.onclick = (ev) => { const b = ev.target.closest('[data-tile]'); if (b) openTile(b.dataset.tile); };
 }
 function restoreSheetCard() {
@@ -720,29 +728,32 @@ function openLogFor(cat) {
 }
 function openMoreTiles() {
   const d = tileDefs(); const mine = new Set(chosenTiles());
-  const rest = Object.keys(d).filter((k) => !mine.has(k));
+  const rest = TILE_GROUPS.flatMap((g) => Object.keys(d).filter((k) => !mine.has(k) && groupOf(k) === g));
   openSheet('More', `<div class="tiles tiles-more">${rest.map((k) => tileBtn(k, d[k])).join('')}</div>
     <button type="button" class="btn ghost block mt10" data-act="tiles-edit">Choose my tiles</button>
     <p class="hint">Pick the ones you use most for the Today screen. Your partner can pick their own on their phone.</p>`);
   $('#sheet-body').onclick = (ev) => { const b = ev.target.closest('[data-tile]'); if (b) { closeSheet(); openTile(b.dataset.tile); return; } if (ev.target.closest('[data-act="tiles-edit"]')) openTileEditor(); };
 }
 function openTileEditor() {
-  const d = tileDefs(); let list = chosenTiles();
+  const d = tileDefs(); let list = orderTiles(chosenTiles()); let grouped = tilesGrouped();
   const draw = () => {
+    if (grouped) list = TILE_GROUPS.flatMap((g) => list.filter((k) => groupOf(k) === g));
     $('#sheet-body').innerHTML = `<p class="hint">Up to 11 tiles, plus More. Use the arrows to change the order.</p>
-      <ol class="tile-edit">${list.map((k, i) => `<li><span>${d[k].em} ${esc(d[k].label)}</span><span class="act-btns"><button type="button" class="chip" data-tup="${i}" aria-label="Move up"${i ? '' : ' disabled'}>↑</button><button type="button" class="chip" data-tdown="${i}" aria-label="Move down"${i < list.length - 1 ? '' : ' disabled'}>↓</button><button type="button" class="chip" data-toff="${esc(k)}">Remove</button></span></li>`).join('')}</ol>
-      <h4 class="feel-sub">Add a tile</h4><div class="chips">${Object.keys(d).filter((k) => !list.includes(k)).map((k) => `<button type="button" class="chip" data-ton="${esc(k)}"${list.length >= 11 ? ' disabled' : ''}>${d[k].em} ${esc(d[k].label)}</button>`).join('')}</div>
+      <ol class="tile-edit">${list.map((k, i) => `<li><span><span class="tg-dot tg-${groupOf(k)}" aria-hidden="true"></span>${d[k].em} ${esc(d[k].label)}</span><span class="act-btns"><button type="button" class="chip" data-tup="${i}" aria-label="Move up"${i ? '' : ' disabled'}>↑</button><button type="button" class="chip" data-tdown="${i}" aria-label="Move down"${i < list.length - 1 ? '' : ' disabled'}>↓</button><button type="button" class="chip" data-toff="${esc(k)}">Remove</button></span></li>`).join('')}</ol>
+      <label class="check"><input type="checkbox" id="tg-keep"${grouped ? ' checked' : ''}> Keep colour groups together</label>
+      <h4 class="feel-sub">Add a tile</h4><div class="chips">${TILE_GROUPS.flatMap((g) => Object.keys(d).filter((k) => !list.includes(k) && groupOf(k) === g)).map((k) => `<button type="button" class="chip tg-${groupOf(k)}" data-ton="${esc(k)}"${list.length >= 11 ? ' disabled' : ''}>${d[k].em} ${esc(d[k].label)}</button>`).join('')}</div>
       <div class="actions mt10"><button type="button" class="btn primary" data-act="tiles-save">Save</button><button type="button" class="btn ghost" data-act="tiles-reset">Back to the usual set</button></div>`;
   };
   openSheet('Choose my tiles', ''); draw();
   $('#sheet-body').onclick = (ev) => {
+    if (ev.target.id === 'tg-keep') { grouped = ev.target.checked; draw(); return; }
     const b = ev.target.closest('button'); if (!b) return; const ds = b.dataset;
     if (ds.tup) { const i = +ds.tup; [list[i - 1], list[i]] = [list[i], list[i - 1]]; draw(); }
     else if (ds.tdown) { const i = +ds.tdown; [list[i + 1], list[i]] = [list[i], list[i + 1]]; draw(); }
     else if (ds.toff) { list = list.filter((x) => x !== ds.toff); draw(); }
     else if (ds.ton && list.length < 11) { list.push(ds.ton); draw(); }
     else if (ds.act === 'tiles-reset') { list = (isHelper() ? TILE_DEFAULT_HELPER : TILE_DEFAULT).slice(); draw(); }
-    else if (ds.act === 'tiles-save') { saveTiles(list); closeSheet(); renderTiles(); toast('Tiles saved on this phone'); }
+    else if (ds.act === 'tiles-save') { try { localStorage.setItem('lo-tiles-free', grouped ? '0' : '1'); } catch { /* ignore */ } saveTiles(list); closeSheet(); renderTiles(); toast('Tiles saved on this phone'); }
   };
 }
 

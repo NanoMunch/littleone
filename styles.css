@@ -782,3 +782,27 @@ a.btn { text-decoration: none; }
 .lb-rate { margin: 8px 0 12px; } .tip-list { padding-left: 18px; } .tip-list li { margin: 4px 0; }
 .from-tile .cat-field { display: none; }
 #breakdown-card .card, #know-sec .card { margin-top: 8px; }
+
+/* settings menu */
+.set-menu { display: flex; flex-direction: column; }
+.set-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--line, #e4dccb); padding: 13px 2px; font: inherit; color: inherit; cursor: pointer; }
+.set-row:first-child { border-top: 0; } .set-row small { display: block; color: var(--muted); font-size: .8rem; margin-top: 2px; }
+.set-page[hidden], .set-menu[hidden] { display: none; } .set-page-title { margin: 0 0 6px; }
+/* display sizes */
+html.ds-lg { font-size: 112%; } html.ds-xl { font-size: 125%; }
+html.ds-lg .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } html.ds-xl .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+html.ds-lg .tiles .tile { min-height: 70px; font-size: .9rem; } html.ds-xl .tiles .tile { min-height: 78px; font-size: 1rem; }
+html.ds-lg .tiles .tile-ic .ico, html.ds-xl .tiles .tile-ic .ico { width: 26px; height: 26px; }
+html.ic-emoji .tiles .tile-ic { font-size: 1.5rem; }
+/* attendance */
+.care-line { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: .86rem; background: var(--card, #fff); border: 1px solid var(--line, #e4dccb); border-radius: 12px; padding: 7px 10px; margin-bottom: 8px; }
+.care-line.absent { border-color: #9a4a4a; }
+.att-line { display: block; width: 100%; text-align: left; background: none; border: 0; border-left: 3px solid #6a4f86; padding: 2px 8px; margin: 0 0 8px; font: inherit; font-size: .85rem; color: var(--muted); cursor: pointer; }
+.att-line.absent { border-left-color: #9a4a4a; }
+/* keep the header the same size at larger text settings */
+html.ds-lg .brand h1 { font-size: 1.2rem; } html.ds-xl .brand h1 { font-size: 1.08rem; }
+html.ds-lg .brand p, html.ds-xl .brand p { font-size: .72rem; }
+html.ds-lg .topbar .icon-btn, html.ds-xl .topbar .icon-btn { padding: 4px; }
+html.ds-xl .tabbar button span, html.ds-lg .tabbar button span { font-size: .72rem; }
+.hidden-box { display: none; } .sick-empty { padding: 6px; cursor: default; }
+.sc-plus-in { display: inline-block; width: 22px; height: 22px; font-size: 15px; margin-left: 6px; vertical-align: middle; }

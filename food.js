@@ -59,16 +59,45 @@ export function dayTotals(meals, cfg, supplementContents = []) {
 
 // ---- school and lunch box
 export const EATEN = { '0': 'Untouched', '25': 'A quarter', '33': 'A third', '50': 'Half', '75': 'Three quarters', '100': 'All' };
+export const PLACE_TYPES = { school: 'School', daycare: 'Daycare', kinder: 'Kinder', fdc: 'Family day care', other: 'Other' };
+const HM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const cleanBreaks = (arr, dflt) => (Array.isArray(arr) ? arr : dflt).map((b) => ({ id: /^[a-z0-9]{1,12}$/.test(b && b.id) ? b.id : '', name: txt(b && b.name, 30) })).filter((b) => b.id && b.name).slice(0, 4);
+export function cleanPlace(p) {
+  if (!p || !/^[a-z0-9]{1,12}$/.test(p.id || '')) return null; const name = txt(p.name, 40); if (!name) return null;
+  return { id: p.id, name, type: PLACE_TYPES[p.type] ? p.type : 'school', days: Array.from(new Set((Array.isArray(p.days) ? p.days : []).map(Number).filter((d) => d >= 0 && d <= 6))).sort(),
+    start: HM.test(p.start || '') ? p.start : '', end: HM.test(p.end || '') ? p.end : '', pack: p.pack !== false, breaks: cleanBreaks(p.breaks, []),
+    email: txt(p.email, 80), phone: txt(p.phone, 30).replace(/[^\d+ ]/g, ''), contact: txt(p.contact, 40), removed: !!p.removed };
+}
 export function cleanSchool(c) {
   c = c && typeof c === 'object' ? c : {};
-  const days = Array.from(new Set((Array.isArray(c.days) ? c.days : [1, 2, 3, 4, 5]).map(Number).filter((d) => d >= 0 && d <= 6))).sort();
-  const breaks = (Array.isArray(c.breaks) ? c.breaks : [{ id: 'mt', name: 'Morning tea' }, { id: 'lu', name: 'Lunch' }]).map((b) => ({ id: /^[a-z0-9]{1,12}$/.test(b && b.id) ? b.id : '', name: txt(b && b.name, 30) })).filter((b) => b.id && b.name).slice(0, 4);
-  const off = (Array.isArray(c.off) ? c.off : []).map((o) => ({ from: ymd(o && o.from) ? o.from : '', to: ymd(o && o.to) ? o.to : '', label: txt(o && o.label, 30) })).filter((o) => o.from).map((o) => ({ ...o, to: o.to && o.to >= o.from ? o.to : o.from })).slice(-40);
-  return { on: !!c.on, days, breaks, off, updatedAt: +c.updatedAt || 0 };
+  let places = (Array.isArray(c.places) ? c.places : []).map(cleanPlace).filter(Boolean).slice(0, 6);
+  if (!Array.isArray(c.places) && (c.days || c.breaks || c.on)) places = [cleanPlace({ id: 'p1', name: 'School', type: 'school', days: Array.isArray(c.days) ? c.days : [1, 2, 3, 4, 5], breaks: cleanBreaks(c.breaks, [{ id: 'mt', name: 'Morning tea' }, { id: 'lu', name: 'Lunch' }]) })];
+  const off = (Array.isArray(c.off) ? c.off : []).map((o) => ({ from: ymd(o && o.from) ? o.from : '', to: ymd(o && o.to) ? o.to : '', label: txt(o && o.label, 30), place: txt(o && o.place, 12) })).filter((o) => o.from).map((o) => ({ ...o, to: o.to && o.to >= o.from ? o.to : o.from })).slice(-40);
+  const live = places.filter((p) => !p.removed);
+  return { on: !!c.on, places: live, off, updatedAt: +c.updatedAt || 0,
+    // kept for older code paths: the first packing place's days and breaks
+    days: live[0] ? live[0].days : [], breaks: live.flatMap((p) => (p.pack ? p.breaks : [])) };
 }
 const dow = (d) => { const [y, m, dd] = d.split('-').map(Number); return new Date(y, m - 1, dd).getDay(); };
-export const isSchoolDay = (sc, d) => !!sc.on && sc.breaks.length > 0 && sc.days.includes(dow(d)) && !sc.off.some((o) => d >= o.from && d <= o.to);
+const closed = (sc, p, d) => sc.off.some((o) => d >= o.from && d <= o.to && (!o.place || o.place === p.id));
+export const placesOn = (sc, d) => sc.places.filter((p) => p.days.includes(dow(d)) && !closed(sc, p, d));
+export const breaksOn = (sc, d) => placesOn(sc, d).filter((p) => p.pack).flatMap((p) => p.breaks.map((b) => ({ ...b, place: p.name, placeId: p.id })));
+export const isSchoolDay = (sc, d) => !!sc.on && breaksOn(sc, d).length > 0;
 export function nextSchoolDay(sc, from, addDays) { for (let i = 1; i <= 14; i++) { const d = addDays(from, i); if (isSchoolDay(sc, d)) return d; } return ''; }
+export const ABSENCE = { unwell: 'Unwell', holiday: 'Holiday or trip', appt: 'Appointment', family: 'Family day', other: 'Other' };
+export const attendId = (date, placeId) => `at${date.replace(/-/g, '')}${placeId}`;
+const toM = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+// One row per place the child was due at that day: times, minutes there, and any absence. a = attendance entry or null.
+export function attendRow(p, a) {
+  const st = a && !a.deleted ? a : {};
+  if (st.status === 'absent') return { place: p, absent: true, reason: ABSENCE[st.reason] ? st.reason : 'other', note: txt(st.note, 120), mins: 0, told: +st.told || 0 };
+  const start = HM.test(st.arrive || '') ? st.arrive : p.start; const end = HM.test(st.leave || '') ? st.leave : p.end;
+  let mins = start && end ? Math.max(0, toM(end) - toM(start)) : 0;
+  const out = HM.test(st.outFrom || '') && HM.test(st.outTo || '') && st.outTo > st.outFrom ? { from: st.outFrom, to: st.outTo } : null;
+  if (out && mins) mins = Math.max(0, mins - (toM(out.to) - toM(out.from)));
+  return { place: p, absent: false, start, end, mins, out, late: start !== p.start ? start : '', early: end !== p.end ? end : '', reason: ABSENCE[st.reason] ? st.reason : '', note: txt(st.note, 120), told: +st.told || 0, changed: !!(st.arrive || st.leave || out) };
+}
+export function attendDay(sc, d, getEntry) { if (!sc.on) return []; return placesOn(sc, d).map((p) => attendRow(p, getEntry(attendId(d, p.id)))); }
 export const lunchId = (date, breakId) => `lb${date.replace(/-/g, '')}${breakId}`;
 export function cleanLunchItems(items) {
   return (Array.isArray(items) ? items : []).map((i) => ({ name: txt(i && i.name, 50), where: txt(i && i.where, 80), eaten: EATEN[i && i.eaten] ? String(i.eaten) : '', part: txt(i && i.part, 80), done: !!(i && i.done) })).filter((i) => i.name).slice(0, 15);

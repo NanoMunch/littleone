@@ -57,3 +57,10 @@ export function withNotes(entries, today, prev, bumpyYesterday) {
   else if (!oneMins && Object.keys(wk).length) notes.push('No one-on-one time logged this week yet. Even ten minutes before the evening routine can help.');
   return notes;
 }
+
+// A rough level from the meals logged today, used when nobody has tapped Low, Usual or Big.
+export function autoEatLevel(ms) {
+  const v = { little: 0.25, half: 0.5, most: 0.8, all: 1 }; const r = ms.filter((m) => v[m.portion] != null);
+  if (!r.length) return ''; const a = r.reduce((s, m) => s + v[m.portion], 0) / r.length;
+  return a < 0.45 ? 'low' : a < 0.85 ? 'usual' : 'big';
+}

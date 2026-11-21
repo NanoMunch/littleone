@@ -6,15 +6,15 @@ import { WHAT, WHY, REPAIR, CUP, CUP_TAGS, SUPPORT, tipsFor, cupTips, momentSumm
 import { cleanHome, mergeHome, variantFor, stepStatus, routineWeek, occurrences, upcoming, followUps, reminders, apptIcs, carerView, tickId, REPEATS } from './home.js';
 import { DETAILS, DETAIL_NUMS, cleanDetail, cleanNum, hasDetail as hasMoment, detailText, detailTitle, momentCards, tallyStats, tallyNotes } from './moments.js';
 import { watchIcons } from './icons.js';
-import { GROUPS, NUTS, FOODS, cleanFoodCfg, allFoods, daySummary, dayTotals, EATEN, cleanSchool, isSchoolDay, nextSchoolDay, lunchId, cleanLunchItems, itemStats, lunchIdeas, shoppingList, lunchLevel } from './food.js';
+import { GROUPS, NUTS, FOODS, cleanFoodCfg, allFoods, daySummary, dayTotals, EATEN, cleanSchool, isSchoolDay, nextSchoolDay, placesOn, breaksOn, PLACE_TYPES, ABSENCE, attendId, attendDay, lunchId, cleanLunchItems, itemStats, lunchIdeas, shoppingList, lunchLevel } from './food.js';
 import { REASONS, prnStatus, temps as tempReadings, unwellDays, reasonLabel, spells, sickChart, doseMs, atMs } from './sick.js';
-import { WITH_KINDS, PORTIONS, EAT_LEVELS, cleanWith, eatLevel, meals as mealsOf, breakdown as dayBreakdown, withMins, withTotals, withNotes } from './daylog.js';
+import { WITH_KINDS, PORTIONS, EAT_LEVELS, cleanWith, eatLevel, meals as mealsOf, breakdown as dayBreakdown, withMins, withTotals, withNotes, autoEatLevel } from './daylog.js';
 import { EFFECTS, DAY_NAMES, retestInfo, reminderIcs, slotsFor, cleanPlans, mergePlans, activeOn, isPrn, doseId, todayRows, cleanItem, sameNutrient, adherence, changePoints, beforeAfter, missedLink, effectCounts } from './meds.js';
 import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.33.3';
+export const APP_VERSION = '1.34.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -311,7 +311,7 @@ function setupFolds() {
     const open = body.hidden; S.fold[k] = open; body.hidden = !open; t.setAttribute('aria-expanded', String(open));
   });
 }
-const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'tally' && e.cat !== 'tick' && e.cat !== 'ask' && e.cat !== 'activity' && e.cat !== 'screen' && e.cat !== 'feedback' && e.cat !== 'meddose' && e.cat !== 'sidefx' && e.cat !== 'with' && e.cat !== 'eat' && e.cat !== 'temp' && e.cat !== 'sickday' && e.cat !== 'lunch');
+const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'tally' && e.cat !== 'tick' && e.cat !== 'ask' && e.cat !== 'activity' && e.cat !== 'screen' && e.cat !== 'feedback' && e.cat !== 'meddose' && e.cat !== 'sidefx' && e.cat !== 'with' && e.cat !== 'eat' && e.cat !== 'temp' && e.cat !== 'sickday' && e.cat !== 'lunch' && e.cat !== 'attend');
 
 // ---------------------------------------------------------------- height and weight
 // Height in centimetres and weight in kilograms, as typed ("104.5", "104,5", "17.2 kg"). Returns NaN when
@@ -588,9 +588,9 @@ const mealsToday = () => mealsOf(allEntries(), today());
 export function renderEatCard() {
   const box = $('#eat-card'); if (!box) return;
   if (isHelper()) { box.innerHTML = ''; return; }
-  const lvl = eatLevel(allEntries(), today()); const ms = mealsToday();
-  const sum = [lvl ? EAT_LEVELS[lvl] : '', ms.length ? `${ms.length} meal${ms.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ') || 'How they ate';
-  box.innerHTML = foldCard('eat', 'How they ate', sum, `<div class="chips" role="group" aria-label="How they ate today">${Object.entries(EAT_LEVELS).map(([k, l]) => `<button type="button" class="chip" data-eatlvl="${k}" aria-pressed="${lvl === k}">${esc(l)}</button>`).join('')}</div>
+  const lvl = eatLevel(allEntries(), today()); const ms = mealsToday(); const auto = lvl ? '' : autoEatLevel(ms);
+  const sum = [lvl ? EAT_LEVELS[lvl] : auto ? `${EAT_LEVELS[auto]} so far` : '', ms.length ? `${ms.length} meal${ms.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ') || 'How they ate';
+  box.innerHTML = foldCard('eat', 'How they ate', sum, `<div class="chips" role="group" aria-label="How they ate today">${Object.entries(EAT_LEVELS).map(([k, l]) => `<button type="button" class="chip" data-eatlvl="${k}" aria-pressed="${lvl === k}">${esc(l)}</button>`).join('')}</div>${auto ? `<p class="hint">${esc(EAT_LEVELS[auto])} so far, worked out from ${ms.length} meal${ms.length === 1 ? '' : 's'} logged. Tap a level to set it yourself.</p>` : ''}
     ${ms.map((m) => `<button type="button" class="time-row" data-eatedit="${esc(m.id)}"><span><b>${m.kind === 'snack' ? 'Snack' : 'Meal'}${m.title ? `: ${esc(m.title)}` : ''}</b><small>${esc([m.time ? fmtTime(m.time) : '', PORTIONS[m.portion], m.note].filter(Boolean).join(' · '))}</small></span></button>`).join('')}
     ${foodCfg().mode !== 'off' ? `${foodSummaryHTML(ms)}<div class="chips mt10"><button type="button" class="chip" data-eatadd="meal">Add a meal</button><button type="button" class="chip" data-eatadd="snack">Add a snack</button></div>` : ''}
     <button type="button" class="chip mt10" data-eatnote="1">Write a longer eating note</button><p class="hint">Only what you log is used. Not logging never reads as not eating.</p>`, false, 'act-card');
@@ -647,7 +647,7 @@ function dayExtras(date) {
   return out;
 }
 function breakdownHTML(date) {
-  const rows = dayBreakdown(allEntries(), date, dayExtras(date));
+  const rows = dayBreakdown(allEntries(), date, [...dayExtras(date), ...attendDay(schoolCfg(), date, attEntry).map((r) => ({ time: r.absent ? '' : r.start, to: r.absent ? '' : r.end, kind: 'with', text: attendText(r) }))]);
   if (!rows.length) return '<p class="hint">Nothing logged for this day yet.</p>';
   return `<ul class="bd-list">${rows.map((r) => `<li class="bd-${r.kind} tg-${{ eat: 'food', act: 'food', scr: 'sleep', rt: 'sleep', med: 'health', with: 'people' }[r.kind] || 'people'}"><span class="tg-dot" aria-hidden="true"></span><span class="bd-time">${r.time ? esc(fmtTime(r.time)) : ''}${r.to ? `<small>to ${esc(fmtTime(r.to))}</small>` : ''}</span><span class="bd-text">${esc(r.text)}</span></li>`).join('')}</ul>`;
 }
@@ -720,27 +720,58 @@ function openFoodSettings() {
 const DAYN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 function openSchoolSettings() {
   let sc = schoolCfg();
+  const save = async () => { await saveSchool(sc); sc = schoolCfg(); renderLunchCard(); renderCareLine(); renderToday(); };
   const draw = () => {
-    $('#sheet-body').innerHTML = `<label class="check"><input type="checkbox" id="sc-on"${sc.on ? ' checked' : ''}> Use the lunch box planner</label>
-      <div class="field"><span class="label">School days</span><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map((d) => `<button type="button" class="chip" data-scday="${d}" aria-pressed="${sc.days.includes(d)}">${DAYN[d]}</button>`).join('')}</div></div>
-      <div class="field"><span class="label">Breaks with food</span>${sc.breaks.map((br, i) => `<div class="row2 mt10"><input class="input" data-brname="${i}" maxlength="30" value="${esc(br.name)}" aria-label="Break name"><button type="button" class="chip" data-brdel="${i}">Remove</button></div>`).join('')}
-        ${sc.breaks.length < 4 ? '<button type="button" class="chip mt10" data-act="br-add">Add a break</button>' : ''}<p class="hint">Rename them to match your school, e.g. Crunch and sip, Recess.</p></div>
-      <div class="field"><span class="label">Days off and holidays</span>${sc.off.filter((o) => o.to >= today()).map((o) => `<div class="kv"><span>${esc(o.label || 'Day off')} <small>${esc(fmtDayLong(o.from))}${o.to !== o.from ? ` to ${esc(fmtDayLong(o.to))}` : ''}</small></span><button type="button" class="chip" data-offdel="${esc(o.from)}">Remove</button></div>`).join('') || '<p class="hint">None coming up.</p>'}
-        <div class="row2 three mt10"><input class="input" type="date" id="off-from" aria-label="From"><input class="input" type="date" id="off-to" aria-label="To (optional)"><input class="input" id="off-l" maxlength="30" placeholder="e.g. Term break" aria-label="Label"></div>
-        <button type="button" class="chip mt10" data-act="off-add">Add days off</button></div>
-      <button type="button" class="btn primary block" data-act="sc-save">Save</button>`;
+    $('#sheet-body').innerHTML = `<label class="check"><input type="checkbox" id="sc-on"${sc.on ? ' checked' : ''}> Use school, care and lunch box</label>
+      <h4 class="feel-sub">Places</h4>${sc.places.map((p) => `<button type="button" class="set-row" data-pled="${p.id}"><span><b>${esc(p.name)}</b><small>${esc([PLACE_TYPES[p.type], p.days.map((d) => DAYN[d]).join(' '), p.start && p.end ? `${fmtTime(p.start)}–${fmtTime(p.end)}` : '', p.pack && p.breaks.length ? `${p.breaks.length} lunch box break${p.breaks.length === 1 ? '' : 's'}` : 'no lunch box'].filter(Boolean).join(' · '))}</small></span><span aria-hidden="true">›</span></button>`).join('') || '<p class="hint">Add the school, daycare or kinder they go to.</p>'}
+      ${sc.places.length < 6 ? '<button type="button" class="btn dark block mt10" data-act="pl-add">Add a place</button>' : ''}
+      <h4 class="feel-sub">Days off and holidays</h4>${sc.off.filter((o) => o.to >= today()).map((o) => `<div class="kv"><span>${esc(o.label || 'Day off')} <small>${esc(fmtDayLong(o.from))}${o.to !== o.from ? ` to ${esc(fmtDayLong(o.to))}` : ''}${o.place ? ` · ${esc((sc.places.find((p) => p.id === o.place) || {}).name || '')}` : ' · all places'}</small></span><button type="button" class="chip" data-offdel="${esc(o.from)}|${esc(o.place)}">Remove</button></div>`).join('') || '<p class="hint">None coming up.</p>'}
+      <div class="row2 three mt10"><input class="input" type="date" id="off-from" aria-label="From"><input class="input" type="date" id="off-to" aria-label="To (optional)"><input class="input" id="off-l" maxlength="30" placeholder="e.g. Term break" aria-label="Label"></div>
+      <select class="select mt10" id="off-pl" aria-label="Which place"><option value="">All places</option>${sc.places.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
+      <button type="button" class="chip mt10" data-act="off-add">Add days off</button>`;
   };
-  openSheet('School and lunch box', ''); draw();
+  openSheet('School, care and lunch box', ''); draw();
   const b = $('#sheet-body');
-  const grab = () => { sc.on = $('#sc-on', b).checked; $$('[data-brname]', b).forEach((x) => { const i = +x.dataset.brname; if (sc.breaks[i]) sc.breaks[i].name = x.value.trim() || sc.breaks[i].name; }); };
+  b.onchange = async (ev) => { if (ev.target.id === 'sc-on') { sc.on = ev.target.checked; await save(); } };
+  b.onclick = async (ev) => {
+    const x = ev.target.closest('button'); if (!x) return; const ds = x.dataset;
+    if (ds.pled) openPlaceSheet(ds.pled);
+    else if (ds.act === 'pl-add') openPlaceSheet('');
+    else if (ds.offdel) { const [f, pl] = ds.offdel.split('|'); sc.off = sc.off.filter((o) => !(o.from === f && o.place === pl)); await save(); draw(); }
+    else if (ds.act === 'off-add') { const f = $('#off-from', b).value; if (!f) { toast('Choose a start date'); return; } sc.off.push({ from: f, to: $('#off-to', b).value || f, label: $('#off-l', b).value.trim(), place: $('#off-pl', b).value }); await save(); draw(); }
+  };
+}
+function openPlaceSheet(id) {
+  const sc = schoolCfg(); const cur = sc.places.find((p) => p.id === id);
+  const p = cur ? { ...cur, breaks: cur.breaks.map((x) => ({ ...x })) } : { id: '', name: '', type: 'school', days: [1, 2, 3, 4, 5], start: '08:45', end: '15:15', pack: true, breaks: [{ id: '', name: 'Morning tea' }, { id: '', name: 'Lunch' }], email: '', phone: '', contact: '' };
+  const draw = () => {
+    $('#sheet-body').innerHTML = `<div class="field"><label class="label" for="pl-name">Name</label><input class="input" id="pl-name" maxlength="40" value="${esc(p.name)}" placeholder="e.g. St Mary's Primary"></div>
+      <div class="field"><span class="label">Type</span><div class="chips">${Object.entries(PLACE_TYPES).map(([k, l]) => `<button type="button" class="chip" data-pltype="${k}" aria-pressed="${p.type === k}">${l}</button>`).join('')}</div></div>
+      <div class="field"><span class="label">Days</span><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map((d) => `<button type="button" class="chip" data-plday="${d}" aria-pressed="${p.days.includes(d)}">${DAYN[d]}</button>`).join('')}</div></div>
+      <div class="field two"><div><label class="label" for="pl-s">Usual start</label><input class="input" id="pl-s" type="time" value="${esc(p.start)}"></div><div><label class="label" for="pl-e">Usual finish</label><input class="input" id="pl-e" type="time" value="${esc(p.end)}"></div></div>
+      <label class="check"><input type="checkbox" id="pl-pack"${p.pack ? ' checked' : ''}> We pack a lunch box for here</label>
+      ${p.pack ? `<div class="field"><span class="label">Breaks with food</span>${p.breaks.map((br, i) => `<div class="row2 mt10"><input class="input" data-brname="${i}" maxlength="30" value="${esc(br.name)}" aria-label="Break name"><button type="button" class="chip" data-brdel="${i}">Remove</button></div>`).join('')}${p.breaks.length < 4 ? '<button type="button" class="chip mt10" data-act="br-add">Add a break</button>' : ''}</div>` : ''}
+      <div class="field"><span class="label">Contact for absences (optional)</span><input class="input" id="pl-c" maxlength="40" value="${esc(p.contact)}" placeholder="Teacher or office, e.g. Ms Lee"><input class="input mt10" id="pl-em" type="email" maxlength="80" value="${esc(p.email)}" placeholder="Email"><input class="input mt10" id="pl-ph" type="tel" maxlength="30" value="${esc(p.phone)}" placeholder="Mobile for texts (optional)"></div>
+      <button type="button" class="btn primary block" data-act="pl-save">Save</button>${cur ? '<button type="button" class="btn danger block mt10" data-act="pl-del">Remove this place</button>' : ''}`;
+  };
+  openSheet(cur ? cur.name : 'Add a place', ''); draw();
+  const b = $('#sheet-body');
+  const grab = () => { p.name = $('#pl-name', b).value.trim(); p.start = $('#pl-s', b).value; p.end = $('#pl-e', b).value; p.pack = $('#pl-pack', b).checked; p.contact = $('#pl-c', b).value.trim(); p.email = $('#pl-em', b).value.trim(); p.phone = $('#pl-ph', b).value.trim(); $$('[data-brname]', b).forEach((x) => { const i = +x.dataset.brname; if (p.breaks[i]) p.breaks[i].name = x.value.trim() || p.breaks[i].name; }); };
+  b.onchange = (ev) => { if (ev.target.id === 'pl-pack') { grab(); draw(); } };
   b.onclick = async (ev) => {
     const x = ev.target.closest('button'); if (!x) return; const ds = x.dataset; grab();
-    if (ds.scday) { const d = +ds.scday; sc.days = sc.days.includes(d) ? sc.days.filter((y) => y !== d) : [...sc.days, d]; draw(); }
-    else if (ds.brdel) { sc.breaks.splice(+ds.brdel, 1); draw(); }
-    else if (ds.act === 'br-add') { const used = new Set(sc.breaks.map((y) => y.id)); const id = ['at', 'b4', 'b5', 'b6', 'mt', 'lu'].find((y) => !used.has(y)); sc.breaks.push({ id, name: sc.breaks.length === 2 ? 'Afternoon tea' : 'Snack' }); draw(); }
-    else if (ds.offdel) { sc.off = sc.off.filter((o) => o.from !== ds.offdel); draw(); }
-    else if (ds.act === 'off-add') { const f = $('#off-from', b).value; if (!f) { toast('Choose a start date'); return; } sc.off.push({ from: f, to: $('#off-to', b).value || f, label: $('#off-l', b).value.trim() }); draw(); }
-    else if (ds.act === 'sc-save') { await saveSchool(sc); closeSheet(); renderLunchCard(); renderToday(); toast('Saved'); }
+    if (ds.pltype) { p.type = ds.pltype; draw(); }
+    else if (ds.plday) { const d = +ds.plday; p.days = p.days.includes(d) ? p.days.filter((y) => y !== d) : [...p.days, d]; draw(); }
+    else if (ds.brdel) { p.breaks.splice(+ds.brdel, 1); draw(); }
+    else if (ds.act === 'br-add') { p.breaks.push({ id: '', name: p.breaks.length === 2 ? 'Afternoon tea' : 'Snack' }); draw(); }
+    else if (ds.act === 'pl-del') { const all = schoolCfg(); all.places = all.places.map((y) => (y.id === id ? { ...y, removed: true } : y)); await saveSchool(all); openSchoolSettings(); }
+    else if (ds.act === 'pl-save') {
+      if (!p.name) { toast('Add a name'); return; }
+      const all = schoolCfg(); const rid = () => Sync.randomId(6).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 6) || 'x';
+      p.id = p.id || `p${rid()}`; p.breaks = p.breaks.map((br) => ({ ...br, id: br.id || `b${rid()}` }));
+      all.places = cur ? all.places.map((y) => (y.id === id ? p : y)) : [...all.places, p]; all.on = true;
+      await saveSchool(all); renderLunchCard(); renderCareLine(); openSchoolSettings(); toast('Saved');
+    }
   };
 }
 const lunchEntry = (date, br) => { const e = S.entries.get(lunchId(date, br)); return e && !e.deleted ? e : null; };
@@ -769,14 +800,14 @@ async function pruneLunchPhotos() { const idx = (await kvGet('lbphotos').catch((
 function lunchWhen() {
   const sc = schoolCfg(); if (!sc.on) return null; const hr = new Date().getHours(); const t = today();
   const tom = nextSchoolDay(sc, t, addDays);
-  const unrated = isSchoolDay(sc, t) && sc.breaks.some((br) => { const e = lunchEntry(t, br.id); return e && cleanLunchItems(e.items).length && !e.rated; });
+  const unrated = isSchoolDay(sc, t) && breaksOn(sc, t).some((br) => { const e = lunchEntry(t, br.id); return e && cleanLunchItems(e.items).length && !e.rated; });
   return { sc, t, tom, pack: hr >= 15 && tom === addDays(t, 1), rate: hr >= 15 && unrated };
 }
 export function renderLunchCard() {
   const box = $('#lunch-card'); if (!box) return;
   const w = lunchWhen(); if (!w || isHelper()) { box.innerHTML = ''; S.lunchNow = false; return; }
-  const sec = (date, label) => `<h4 class="feel-sub">${esc(label)}</h4>${w.sc.breaks.map((br) => { const e = lunchEntry(date, br.id); const items = e ? cleanLunchItems(e.items) : [];
-    return `<div class="lb-break"><b>${esc(br.name)}</b>${items.length ? `<ul class="lb-items">${items.map((i, ix) => `<li><button type="button" class="lb-tick" data-lbtick="${date}|${br.id}|${ix}" aria-pressed="${i.done}" aria-label="Packed ${esc(i.name)}"></button><span>${esc(i.name)}${i.where ? `<small>${esc(i.where)}</small>` : ''}${i.eaten !== '' ? `<small>${esc(EATEN[i.eaten])}${i.part ? `, ${esc(i.part)}` : ''}</small>` : ''}</span></li>`).join('')}</ul>${e.note ? `<p class="hint">${esc(e.note)}</p>` : ''}${e.listBy && e.listBy !== S.myName ? `<p class="hint">List from ${esc(e.listBy)}</p>` : ''}` : '<p class="hint">Nothing planned yet.</p>'}</div>`; }).join('')}`;
+  const sec = (date, label) => `<h4 class="feel-sub">${esc(label)}</h4>${breaksOn(w.sc, date).map((br) => { const e = lunchEntry(date, br.id); const items = e ? cleanLunchItems(e.items) : [];
+    return `<div class="lb-break"><b>${esc(br.name)}</b>${placesOn(w.sc, date).filter((p) => p.pack).length > 1 ? ` <small>${esc(br.place)}</small>` : ''}${items.length ? `<ul class="lb-items">${items.map((i, ix) => `<li><button type="button" class="lb-tick" data-lbtick="${date}|${br.id}|${ix}" aria-pressed="${i.done}" aria-label="Packed ${esc(i.name)}"></button><span>${esc(i.name)}${i.where ? `<small>${esc(i.where)}</small>` : ''}${i.eaten !== '' ? `<small>${esc(EATEN[i.eaten])}${i.part ? `, ${esc(i.part)}` : ''}</small>` : ''}</span></li>`).join('')}</ul>${e.note ? `<p class="hint">${esc(e.note)}</p>` : ''}${e.listBy && e.listBy !== S.myName ? `<p class="hint">List from ${esc(e.listBy)}</p>` : ''}` : '<p class="hint">Nothing planned yet.</p>'}</div>`; }).join('')}`;
   const showT = isSchoolDay(w.sc, w.t);
   const sum = w.rate ? 'How did it go?' : w.pack ? 'Pack for tomorrow' : w.tom ? `Next: ${fmtDayLong(w.tom)}` : 'No school days coming up';
   box.innerHTML = foldCard('lunch', 'Lunch box', sum, `${w.tom ? sec(w.tom, `${w.tom === addDays(w.t, 1) ? 'Tomorrow' : fmtDayLong(w.tom)}`) : ''}
@@ -794,7 +825,7 @@ export function renderLunchCard() {
 }
 async function photoImg(date, when) { const d = await kvGet(lunchPhotoKey(date, when)).catch(() => null); return d ? `<img class="lb-photo" src="${d}" alt="${when === 'am' ? 'Packed' : 'Came home'} lunch box">` : ''; }
 async function openPackSheet(date) {
-  const sc = schoolCfg(); const known = lunchItemsKnown(); const lists = {}; const notes = {};
+  const sc0 = schoolCfg(); const sc = { ...sc0, breaks: breaksOn(sc0, date).length ? breaksOn(sc0, date) : sc0.breaks }; const known = lunchItemsKnown(); const lists = {}; const notes = {};
   sc.breaks.forEach((br) => { const e = lunchEntry(date, br.id); lists[br.id] = e ? cleanLunchItems(e.items) : []; notes[br.id] = e ? e.note || '' : ''; });
   const prev = allEntries().filter((e) => e && !e.deleted && e.cat === 'lunch' && e.date < date && cleanLunchItems(e.items).length).sort((a, b) => b.date.localeCompare(a.date))[0];
   const am = await photoImg(date, 'am');
@@ -823,7 +854,7 @@ async function openPackSheet(date) {
   };
 }
 async function openRateSheet(date) {
-  const sc = schoolCfg(); const lists = {}; sc.breaks.forEach((br) => { const e = lunchEntry(date, br.id); lists[br.id] = e ? cleanLunchItems(e.items) : []; });
+  const sc0 = schoolCfg(); const sc = { ...sc0, breaks: breaksOn(sc0, date).length ? breaksOn(sc0, date) : sc0.breaks }; const lists = {}; sc.breaks.forEach((br) => { const e = lunchEntry(date, br.id); lists[br.id] = e ? cleanLunchItems(e.items) : []; });
   if (!Object.values(lists).some((l) => l.length)) { openPackSheet(date); toast('Add what was packed first'); return; }
   const am = await photoImg(date, 'am'); const pm = await photoImg(date, 'pm');
   const draw = () => {
@@ -852,6 +883,80 @@ function openLunchTips() {
     <button type="button" class="btn ghost block mt10" data-act="lb-copylist">Copy shopping list</button>` : '<p class="hint">Once a few lunch boxes have been rated, this shows what gets eaten, what comes back, and ideas based on your own records.</p>', { onMount: (b) => { b.onclick = async (ev) => { if (!ev.target.closest('[data-act="lb-copylist"]')) return; const t = `Lunch box shopping\nFavourites: ${sh.favourites.join(', ')}\nTry again: ${sh.tryMore.join(', ')}`; try { await navigator.clipboard.writeText(t); toast('Copied'); } catch { toast("Couldn't copy on this phone"); } }; } });
 }
 
+
+// ---------------------------------------------------------------- Attendance: where they are today, absences and part-days
+const attEntry = (id) => { const e = S.entries.get(id); return e && !e.deleted ? e : null; };
+const minsTxt = (m) => (m >= 60 ? fmtDur(m) : `${m} min`);
+function attendText(r) {
+  if (r.absent) return `Absent from ${r.place.name}: ${ABSENCE[r.reason].toLowerCase()}${r.note ? ` (${r.note})` : ''}`;
+  const times = r.start && r.end ? ` ${fmtTime(r.start)}–${fmtTime(r.end)}` : '';
+  return `At ${r.place.name}${times}${r.out ? `, out ${fmtTime(r.out.from)}–${fmtTime(r.out.to)}` : ''}${r.reason ? ` for ${ABSENCE[r.reason].toLowerCase()}` : ''}${r.note ? ` (${r.note})` : ''}${r.mins ? ` · ${minsTxt(r.mins)}` : ''}`;
+}
+async function saveAttend(date, placeId, patch) {
+  const id = attendId(date, placeId); const cur = S.entries.get(id); const now = Date.now();
+  if (patch === null) { if (cur && !cur.deleted) await saveActivity({ id, deleted: true, updatedAt: now, by: S.myName || '' }); return; }
+  await saveActivity({ ...(cur && !cur.deleted ? cur : { id, createdAt: now, cat: 'attend', date, placeId, title: '', sev: 0, src: 'parent', time: '' }), ...patch, deleted: false, updatedAt: now, by: S.myName || '', byDev: S.deviceId, srcName: S.myName || 'Me' });
+}
+export function renderCareLine() {
+  const box = $('#care-line'); if (!box) return;
+  if (isHelper()) { box.innerHTML = ''; return; }
+  const rows = attendDay(schoolCfg(), today(), attEntry); if (!rows.length) { box.innerHTML = ''; return; }
+  box.innerHTML = rows.map((r) => `<div class="care-line${r.absent ? ' absent' : ''}"><span>${esc(r.absent ? `Away from ${r.place.name} today: ${ABSENCE[r.reason].toLowerCase()}` : `Today: ${r.place.name}${r.start && r.end ? `, ${fmtTime(r.start)}–${fmtTime(r.end)}` : ''}${r.out ? `, out ${fmtTime(r.out.from)}–${fmtTime(r.out.to)}` : ''}`)}${r.told ? ' <small>· school told</small>' : ''}</span><button type="button" class="chip" data-care="${r.place.id}">${r.absent || r.changed ? 'Change' : 'Not going or part day'}</button></div>`).join('');
+  box.onclick = (ev) => { const b = ev.target.closest('[data-care]'); if (b) openAttendSheet(today(), b.dataset.care); };
+}
+function tellMessage(date, place, r) {
+  const who = S.profile.childName || 'our child'; const day = date === today() ? 'today' : date === addDays(today(), 1) ? 'tomorrow' : `on ${fmtDayLong(date)}`;
+  const hi = place.contact ? `Hi ${place.contact},` : 'Hi,';
+  let what;
+  if (r.absent) what = `${who} will be away ${day}${r.reason && r.reason !== 'other' ? ` (${ABSENCE[r.reason].toLowerCase()}${r.note ? `: ${r.note}` : ''})` : r.note ? ` (${r.note})` : ''}.`;
+  else { const bits = []; if (r.late) bits.push(`will arrive at ${fmtTime(r.late)}`); if (r.out) bits.push(`will be out from ${fmtTime(r.out.from)} to ${fmtTime(r.out.to)}`); if (r.early) bits.push(`will be picked up at ${fmtTime(r.early)}`); what = `${who} ${bits.join(' and ') || 'has a change'} ${day}${r.reason ? ` (${ABSENCE[r.reason].toLowerCase()}${r.note ? `: ${r.note}` : ''})` : ''}.`; }
+  return `${hi}\n\n${what}\n\nThanks,\n${S.myName || ''}`.trim();
+}
+function openAttendSheet(date, placeId) {
+  const sc = schoolCfg(); const place = sc.places.find((p) => p.id === placeId); if (!place) return;
+  const cur = attEntry(attendId(date, placeId)) || {}; let mode = cur.status === 'absent' ? 'absent' : (cur.arrive || cur.leave || cur.outFrom) ? 'part' : 'absent'; let reason = cur.reason || '';
+  const draw = () => {
+    $('#sheet-body').innerHTML = `<p class="hint">${esc(place.name)}${place.start && place.end ? `, usually ${fmtTime(place.start)}–${fmtTime(place.end)}` : ''} · ${esc(date === today() ? 'today' : fmtDayLong(date))}</p>
+      <div class="chips"><button type="button" class="chip" data-amode="absent" aria-pressed="${mode === 'absent'}">Not going</button><button type="button" class="chip" data-amode="part" aria-pressed="${mode === 'part'}">Part of the day</button></div>
+      ${mode === 'part' ? `<div class="field two mt10"><div><label class="label" for="at-a">Arrived or arriving</label><input class="input" id="at-a" type="time" value="${esc(cur.arrive || '')}"></div><div><label class="label" for="at-l">Picked up</label><input class="input" id="at-l" type="time" value="${esc(cur.leave || '')}"></div></div>
+        <div class="field two"><div><label class="label" for="at-of">Out from</label><input class="input" id="at-of" type="time" value="${esc(cur.outFrom || '')}"></div><div><label class="label" for="at-ot">Back at</label><input class="input" id="at-ot" type="time" value="${esc(cur.outTo || '')}"></div></div><p class="hint">Fill in only what changed.</p>` : ''}
+      <div class="field"><span class="label">Reason</span><div class="chips">${Object.entries(ABSENCE).map(([k, l]) => `<button type="button" class="chip" data-areason="${k}" aria-pressed="${reason === k}">${l}</button>`).join('')}</div></div>
+      <div class="field"><label class="label" for="at-n">Note (optional)</label><input class="input" id="at-n" maxlength="120" value="${esc(cur.note || '')}" placeholder="e.g. Dentist at 10, or went to the zoo with Nana"></div>
+      <div class="actions"><button type="button" class="btn primary" data-act="at-save">Save</button>${cur.status || cur.arrive || cur.leave || cur.outFrom ? '<button type="button" class="btn ghost" data-act="at-clear">Went as usual</button>' : ''}</div>
+      ${place.email || place.phone ? `<div class="actions mt10">${place.email ? '<button type="button" class="btn ghost" data-act="at-email">Save and email the school</button>' : ''}${place.phone ? '<button type="button" class="btn ghost" data-act="at-sms">Save and text</button>' : ''}</div>` : '<p class="hint">Add a teacher or office email in Settings, School, care and lunch box, to send a message from here.</p>'}`;
+  };
+  openSheet('Attendance', ''); draw();
+  const b = $('#sheet-body');
+  const grabPatch = () => { const note = $('#at-n', b).value.trim(); if (mode === 'absent') return { status: 'absent', reason: reason || 'other', note, arrive: '', leave: '', outFrom: '', outTo: '' }; return { status: 'partial', reason, note, arrive: $('#at-a', b).value, leave: $('#at-l', b).value, outFrom: $('#at-of', b).value, outTo: $('#at-ot', b).value }; };
+  b.onclick = async (ev) => {
+    const x = ev.target.closest('button'); if (!x) return; const ds = x.dataset;
+    if (ds.amode) { const n = $('#at-n', b).value; mode = ds.amode; draw(); $('#at-n', b).value = n; return; }
+    if (ds.areason) { reason = reason === ds.areason ? '' : ds.areason; $$('[data-areason]', b).forEach((y) => y.setAttribute('aria-pressed', String(y.dataset.areason === reason))); return; }
+    if (ds.act === 'at-clear') { await saveAttend(date, placeId, null); closeSheet(); afterAttend(); return; }
+    if (!['at-save', 'at-email', 'at-sms'].includes(ds.act)) return;
+    const patch = grabPatch(); await saveAttend(date, placeId, patch);
+    if (patch.status === 'absent' && patch.reason === 'unwell') await markSick(date, [], false);
+    if (ds.act !== 'at-save') {
+      const r = attendDay(schoolCfg(), date, attEntry).find((y) => y.place.id === placeId) || { ...patch, absent: patch.status === 'absent' };
+      const msg = tellMessage(date, place, r);
+      if (ds.act === 'at-email') window.location.href = `mailto:${encodeURIComponent(place.email)}?subject=${encodeURIComponent(`${S.profile.childName || 'Absence'}: ${date === today() ? 'today' : fmtDayLong(date)}`)}&body=${encodeURIComponent(msg)}`;
+      else window.location.href = `sms:${place.phone.replace(/\s/g, '')}&body=${encodeURIComponent(msg)}`;
+      await saveAttend(date, placeId, { told: Date.now() });
+    }
+    closeSheet(); afterAttend(); toast('Saved');
+  };
+}
+function afterAttend() { renderCareLine(); renderLunchCard(); renderBreakdownCard(); renderToday(); if (S.tab === 'history') renderHistory(); }
+function attendInsightHTML() {
+  const sc = schoolCfg(); if (!sc.on || !sc.places.length) return '';
+  const days = S.insightRange === 'all' ? 90 : Math.min(+S.insightRange, 90); const per = new Map(); const abs = new Map(); let missedMins = 0;
+  for (let i = 0; i < days; i++) { const d = addDays(today(), -i); attendDay(sc, d, attEntry).forEach((r) => { const k = r.place.name; const v = per.get(k) || { days: 0, mins: 0 }; if (!r.absent) { v.days++; v.mins += r.mins; } per.set(k, v); if (r.absent) abs.set(r.reason, (abs.get(r.reason) || 0) + 1); const full = r.place.start && r.place.end ? (+r.place.end.slice(0, 2) * 60 + +r.place.end.slice(3)) - (+r.place.start.slice(0, 2) * 60 + +r.place.start.slice(3)) : 0; if (!r.absent && full && r.mins < full) missedMins += full - r.mins; }); }
+  if (!per.size) return '';
+  const wk = days / 7;
+  return `<div class="card"><h3 class="card-title">School and care</h3>${Array.from(per.entries()).map(([k, v]) => `<p>${esc(k)}: ${v.days} day${v.days === 1 ? '' : 's'}${v.mins ? `, about ${fmtDur(Math.round(v.mins / wk))} a week` : ''}</p>`).join('')}
+    ${abs.size ? `<p class="hint">Days away: ${esc(Array.from(abs.entries()).map(([r, n]) => `${ABSENCE[r].toLowerCase()} ${n}`).join(', '))}.</p>` : ''}${missedMins ? `<p class="hint">Part days: about ${esc(fmtDur(missedMins))} missed in total.</p>` : ''}<p class="hint">Last ${days} days.</p></div>`;
+}
+
 // ---------------------------------------------------------------- Sick days: dose timers, temperatures, reasons
 const DOSE_COLS = ['a', 'b', 'c', 'd'];
 const allE = () => Array.from(S.entries.values());
@@ -870,13 +975,13 @@ export function renderSickStrip() {
   const k = sickNow(); if (!k.active) { box.innerHTML = ''; return; }
   const last = k.rs[k.rs.length - 1];
   const lines = k.meds.map((x) => `<div class="ss-row"><b>${esc(x.p.name)}</b><span class="${x.st.canNow ? 'ss-ok' : 'ss-wait'}">last ${esc(fmtTime(hmFromMs(x.st.last)))} · ${x.st.canNow ? 'can be given now' : `next from ${esc(fmtTime(hmFromMs(x.st.next)))}`}${x.st.max24 ? ` · ${x.st.count} of ${x.st.max24}` : ''}</span></div>`).join('');
-  const reasons = k.marker && k.marker.reasons && k.marker.reasons.length ? `<div class="ss-row"><b>Unwell</b><span>${esc(k.marker.reasons.map(reasonLabel).join(', '))}</span></div>` : '';
+  const reasons = k.marker ? `<div class="ss-row"><b>Unwell</b><span>${k.marker.reasons && k.marker.reasons.length ? esc(k.marker.reasons.map(reasonLabel).join(', ')) : '<button type="button" class="link-btn" data-sick="why">Add what\'s going on</button>'}</span></div>` : '';
   const marks = []; const doses = medDoses(); const cut = Date.now() - 86400000;
   k.meds.forEach((x) => doses.filter((d) => d.planId === x.id && d.status !== 'missed').forEach((d) => { const ms = doseMs(d); if (ms >= cut) marks.push({ ms, gapH: x.p.gapH, letter: x.p.name.slice(0, 1).toUpperCase(), c: x.c }); }));
   const key = `<span class="sc-key"><i class="k-temp"></i>Temperature</span>${k.meds.map((x) => `<span class="sc-key"><i data-c="${x.c}"></i>${esc(x.p.name)}</span>`).join('')}`;
-  box.innerHTML = `<div class="card sick-strip">${lines}${reasons}<div class="ss-row"><b>Last temp</b><span>${last ? `${last.value}° at ${esc(fmtTime(last.time || hmFromMs(last.ms)))} (${agoMs(last.ms)})` : 'none logged'}</span></div></div>
-    <div class="card sick-box" data-sick="open"><div class="sc-head"><span class="sc-keys">${key}</span><button type="button" class="sc-plus" data-sick="temp" aria-label="Add a temperature">+</button></div>${sickChart(k.rs, marks, Date.now())}</div>`;
-  box.onclick = (ev) => { const b = ev.target.closest('[data-sick]'); if (!b) return; ev.stopPropagation(); if (b.dataset.sick === 'temp') openTempSheet(); else openSickDay(today()); };
+  box.innerHTML = `<div class="card sick-strip">${lines}${reasons}<div class="ss-row"><b>Last temp</b><span>${last ? `${last.value}° at ${esc(fmtTime(last.time || hmFromMs(last.ms)))} (${agoMs(last.ms)})` : 'none logged'}${k.rs.length || marks.length ? '' : ' <button type="button" class="sc-plus sc-plus-in" data-sick="temp" aria-label="Add a temperature">+</button>'}</span></div></div>
+<div class="card sick-box${k.rs.length || marks.length ? '' : ' hidden-box'}" data-sick="open"><div class="sc-head"><span class="sc-keys">${key}</span><button type="button" class="sc-plus" data-sick="temp" aria-label="Add a temperature">+</button></div>${sickChart(k.rs, marks, Date.now())}</div>`;
+  box.onclick = (ev) => { const b = ev.target.closest('[data-sick]'); if (!b) return; ev.stopPropagation(); if (b.dataset.sick === 'temp') openTempSheet(); else if (b.dataset.sick === 'why') openUnwellSheet(); else openSickDay(today()); };
 }
 function reasonChips(sel, other) {
   return `<div class="chips" data-reasons>${Object.entries(REASONS).map(([k, l]) => `<button type="button" class="chip" data-rs="${k}" aria-pressed="${sel.has(k)}">${esc(l)}</button>`).join('')}</div>
@@ -1108,7 +1213,7 @@ function nowWanted(id) {
 }
 export function renderToday() {
   const panel = $('#tab-today'); if (!panel) return;
-  renderSickStrip(); renderLunchCard();
+  renderSickStrip(); renderLunchCard(); renderCareLine();
   const now = $('#now'); const store = $('#card-store');
   NOW_ORDER.forEach((id) => { const el = document.getElementById(id); if (!el || S.sheetCard === id) return; if (nowWanted(id)) now.appendChild(el); else if (el.parentNode !== store) store.appendChild(el); });
   $('#now-sec').hidden = !now.children.length;
@@ -1746,7 +1851,7 @@ function renderOutlookInner() {
   const off = !!(S.outlook && S.outlook.off) || (S.outlook && S.outlook.hideDay === today());
   if (isHelper() || off) { box.innerHTML = ''; return; }
   const all = live();
-  const o = outlook(all, sleepNights(all), dayRatings(dayfeelEntries()), today(), new Date().getHours(), dayTagMap(tagSource()), { missed: medDoses().filter((d) => d.date === today() && d.status === 'missed').length, late: medDoses().filter((d) => d.date === today() && d.status === 'late').length }, { eatLevel: eatLevel(Array.from(S.entries.values()), today()), notes: withNotes(Array.from(S.entries.values()), today(), (d, n) => addDays(d, -n), (dayRatings(dayfeelEntries()).get(addDays(today(), -1)) || 0) >= 2.5) });
+  const o = outlook(all, sleepNights(all), dayRatings(dayfeelEntries()), today(), new Date().getHours(), dayTagMap(tagSource()), { missed: medDoses().filter((d) => d.date === today() && d.status === 'missed').length, late: medDoses().filter((d) => d.date === today() && d.status === 'late').length }, { eatLevel: eatLevel(Array.from(S.entries.values()), today()) || autoEatLevel(mealsOf(Array.from(S.entries.values()), today())), notes: withNotes(Array.from(S.entries.values()), today(), (d, n) => addDays(d, -n), (dayRatings(dayfeelEntries()).get(addDays(today(), -1)) || 0) >= 2.5) });
   if (!o) { box.innerHTML = ''; return; }
   box.innerHTML = foldCard('outlook', o.level === 'harder' ? 'Today may be a bit harder' : 'Worth knowing today', o.reasons[0] || '', `    <ul class="outlook-list">${o.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
     ${o.tips.length ? `<p class="outlook-tip"><b>Might help:</b> ${esc(o.tips[0])}</p>${o.tips.length > 1 ? `<details class="outlook-more"><summary>More ideas</summary><p class="outlook-tip">${o.tips.slice(1).map(esc).join(' ')}</p></details>` : ''}` : ''}
@@ -1813,14 +1918,51 @@ function toast(msg, action) {
 }
 // A row of jump links at the top of Settings, so each part is one tap away.
 const SET_GROUPS = [['Food and lunch box', 'Food'], ['Your child', 'Child'], ['You', 'You'], ['Family and carers', 'People'], ['People', 'People'], ['Medicines', 'Medicines'], ['Sync', 'Sync'], ['Backup file', 'Backup'], ['Feedback', 'Feedback'], ['Privacy', 'Privacy']];
+// Settings as a short menu: each line opens its own page with a Back button. The sections are moved, not rebuilt, so their
+// handlers keep working.
+function displayCfg() { try { const d = JSON.parse(localStorage.getItem('lo-display') || '{}') || {}; return { size: ['std', 'lg', 'xl'].includes(d.size) ? d.size : 'std', icons: d.icons === 'emoji' ? 'emoji' : 'line' }; } catch { return { size: 'std', icons: 'line' }; } }
+function applyDisplay() { const d = displayCfg(); const r = document.documentElement; r.classList.toggle('ds-lg', d.size === 'lg'); r.classList.toggle('ds-xl', d.size === 'xl'); r.classList.toggle('ic-emoji', d.icons === 'emoji'); }
+function displayFieldHTML() {
+  const d = displayCfg();
+  return `<div class="field"><span class="label">Text and tile size</span><div class="chips">${[['std', 'Standard'], ['lg', 'Large'], ['xl', 'Extra large']].map(([k, l]) => `<button type="button" class="chip" data-dsize="${k}" aria-pressed="${d.size === k}">${l}</button>`).join('')}</div></div>
+    <div class="field"><span class="label">Icons</span><div class="chips">${[['line', 'Line icons'], ['emoji', 'Colourful emoji']].map(([k, l]) => `<button type="button" class="chip" data-dicons="${k}" aria-pressed="${d.icons === k}">${l}</button>`).join('')}</div><p class="hint">Only on this phone.</p></div>`;
+}
+const SET_PAGES = [
+  ['child', 'Your child', () => [S.profile.childName, S.profile.childBirth].filter(Boolean).join(' · ') || 'Name, age, sleep guide'],
+  ['you', 'You and display', () => `${S.myName || 'Your name'} · ${({ std: 'Standard', lg: 'Large', xl: 'Extra large' })[displayCfg().size]} size`],
+  ['people', 'People and carers', () => `${peopleList(false).length} people`],
+  ['meds', 'Medicines and supplements', () => `${Object.values(medPlans()).filter((p) => !p.removed).length} in the plan`],
+  ['routines', 'Routines and appointments', () => 'Bedtime routine, days ahead, appointments'],
+  ['food', 'Food, school and care', () => `Food: ${({ off: 'off', simple: 'simple', detailed: 'detailed' })[foodCfg().mode]} · ${schoolCfg().places.length} place${schoolCfg().places.length === 1 ? '' : 's'}`],
+  ['track', 'What I track', () => 'Cards, log areas and Worth knowing'],
+  ['sync', 'Sync and backup', () => (S.sync ? `Synced ${ago(S.lastSyncAt)}` : 'Sync is off')],
+  ['feedback', 'Feedback', () => 'Tell us what works'],
+  ['privacy', 'Privacy, version and updates', () => `Version ${APP_VERSION}`],
+];
+const SEC_PAGE = [['Your child', 'child'], ['You', 'you'], ['Sync', 'sync'], ['Backup file', 'sync'], ['People who help', 'people'], ['Family members', 'people'], ['Medicines', 'meds'], ['Food', 'food'], ['Feedback', 'feedback'], ['Privacy', 'privacy']];
 function addSettingsJump(body) {
-  const secs = Array.from(body.querySelectorAll('.set-section > h3')); const seen = new Set(); const links = [];
-  secs.forEach((h, i) => { const g = SET_GROUPS.find(([t]) => h.textContent.trim().startsWith(t)); if (!g || seen.has(g[1])) return; seen.add(g[1]); h.id = `set-sec-${i}`; links.push([h.id, g[1]]); });
-  if (links.length < 3) return;
-  const nav = document.createElement('div'); nav.className = 'chips set-jump'; nav.setAttribute('role', 'navigation'); nav.setAttribute('aria-label', 'Jump to');
-  nav.innerHTML = links.map(([id, l]) => `<button type="button" class="chip" data-jump="${id}">${esc(l)}</button>`).join('');
-  nav.addEventListener('click', (ev) => { const b = ev.target.closest('[data-jump]'); const t = b && document.getElementById(b.dataset.jump); if (t) t.scrollIntoView({ block: 'start' }); });
-  body.insertBefore(nav, body.firstChild);
+  const pages = {}; const order = [];
+  const pageFor = (k) => { if (!pages[k]) { const d = document.createElement('div'); d.className = 'set-page'; d.dataset.page = k; d.hidden = true; const t = SET_PAGES.find((x) => x[0] === k); d.innerHTML = `<button type="button" class="back-btn" data-setback="1">&larr; Settings</button><h3 class="set-page-title">${esc(t ? t[1] : k)}</h3>`; pages[k] = d; order.push(k); } return pages[k]; };
+  // fields tagged for another page move first
+  body.querySelectorAll('[data-sgrp]').forEach((f) => pageFor(f.dataset.sgrp).appendChild(f));
+  body.querySelectorAll('.set-section').forEach((sec) => { const h = sec.querySelector('h3'); const t = h ? h.textContent.trim() : ''; const m = SEC_PAGE.find(([p]) => t.startsWith(p)); const k = m ? m[1] : 'privacy'; if (h && (t === 'Your child' || t === 'You' || t === 'Privacy' || t === 'Feedback')) h.remove(); pageFor(k).appendChild(sec); });
+  const you = pageFor('you'); const disp = document.createElement('div'); disp.className = 'set-section'; disp.innerHTML = displayFieldHTML(); you.appendChild(disp);
+  if (!pages.routines) pageFor('routines');
+  const menu = document.createElement('div'); menu.className = 'set-menu';
+  menu.innerHTML = SET_PAGES.filter(([k]) => pages[k]).map(([k, l, h]) => { let hint = ''; try { hint = h(); } catch { /* ignore */ } return `<button type="button" class="set-row" data-setpage="${k}"><span><b>${esc(l)}</b><small>${esc(hint)}</small></span><span aria-hidden="true">›</span></button>`; }).join('');
+  body.innerHTML = ''; body.appendChild(menu); SET_PAGES.forEach(([k]) => { if (pages[k]) body.appendChild(pages[k]); });
+  body.addEventListener('click', (ev) => {
+    const r = ev.target.closest('[data-setpage]'); const bk = ev.target.closest('[data-setback]');
+    const ds = ev.target.closest('[data-dsize]'); const di = ev.target.closest('[data-dicons]');
+    if (r) { menu.hidden = true; Object.values(pages).forEach((p) => { p.hidden = p.dataset.page !== r.dataset.setpage; }); body.scrollTop = 0; $('#sheet-title').textContent = (SET_PAGES.find((x) => x[0] === r.dataset.setpage) || [])[1] || 'Settings'; }
+    else if (bk) { menu.hidden = false; Object.values(pages).forEach((p) => { p.hidden = true; }); body.scrollTop = 0; $('#sheet-title').textContent = 'Settings'; }
+    else if (ds || di) {
+      const d = displayCfg(); if (ds) d.size = ds.dataset.dsize; if (di) d.icons = di.dataset.dicons;
+      try { localStorage.setItem('lo-display', JSON.stringify(d)); } catch { /* ignore */ }
+      $$('[data-dsize]', body).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.dsize === d.size))); $$('[data-dicons]', body).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.dicons === d.icons)));
+      applyDisplay(); if (di) { toast('Changing icons…'); setTimeout(() => location.reload(), 600); }
+    }
+  });
 }
 function openSheet(title, html, { full = false, onMount } = {}) {
   restoreSheetCard();
@@ -2675,8 +2817,8 @@ function eatAsEntries() {
   const out = []; const brs = schoolCfg().breaks;
   for (const e of S.entries.values()) {
     if (!e || e.deleted || !e.date) continue;
-    if (e.cat === 'eat' && e.kind === 'level' && EAT_LEVELS[e.level]) out.push({ ...e, cat: 'eating', time: '', tod: '', title: `How they ate today: ${EAT_LEVELS[e.level].toLowerCase()}`, notes: '', _eat: 1 });
-    else if (e.cat === 'eat' && (e.kind === 'meal' || e.kind === 'snack') && PORTIONS[e.portion]) out.push({ ...e, cat: 'eating', title: `${e.kind === 'snack' ? 'Snack' : 'Meal'}${e.title ? `: ${e.title}` : ''}`, notes: [`${PORTIONS[e.portion]} eaten`, e.notes].filter(Boolean).join('. '), _eat: 1 });
+    if (e.cat === 'eat' && e.kind === 'level') continue;
+    if (e.cat === 'eat' && (e.kind === 'meal' || e.kind === 'snack') && PORTIONS[e.portion]) out.push({ ...e, cat: 'eating', title: `${e.kind === 'snack' ? 'Snack' : 'Meal'}${e.title ? `: ${e.title}` : ''}`, notes: [`${PORTIONS[e.portion]} eaten`, e.notes].filter(Boolean).join('. '), _eat: 1 });
     else if (e.cat === 'lunch' && e.rated) { const br = brs.find((x) => x.id === e.breakId); const it = cleanLunchItems(e.items); out.push({ ...e, cat: 'eating', time: e.time || '', title: `Lunch box${br ? ` (${br.name})` : ''}`, notes: it.map((i) => `${i.name}: ${(EATEN[i.eaten] || 'not rated').toLowerCase()}${i.part ? ` (${i.part})` : ''}`).join(', '), _eat: 1 }); }
   }
   return out;
@@ -2854,7 +2996,7 @@ function renderHistory() {
   days.forEach(({ date, list: dayList }) => {
     const uw = S.uwDays && S.uwDays.get(date); const uwFlag = uw ? ` <button type="button" class="day-flag uw-flag" data-sick-day="${date}">Unwell${uw.size ? `: ${esc(Array.from(uw).slice(0, 2).map(reasonLabel).join(', '))}` : ''}</button>` : '';
     const flag = (flagDays.has(date) ? ` <button type="button" class="day-flag${flagDays.get(date) ? ' over' : ''}" data-check-day="${date}">⚠ Supplement check</button>` : '') + uwFlag;
-    html += `<h3 class="day-head">${date === t ? 'Today' : date === y ? 'Yesterday' : esc(fmtDayLong(date))}${flag} <button type="button" class="day-flag bd-btn" data-bd-day="${date}">Day breakdown</button></h3>`;
+    html += `<h3 class="day-head">${date === t ? 'Today' : date === y ? 'Yesterday' : esc(fmtDayLong(date))}${flag} <button type="button" class="day-flag bd-btn" data-bd-day="${date}">Day breakdown</button></h3>${date <= t ? attendDay(schoolCfg(), date, attEntry).map((r) => `<button type="button" class="att-line${r.absent ? ' absent' : ''}" data-att="${date}|${r.place.id}">${esc(attendText(r))}</button>`).join('') : ''}`;
     groupDay(dayList).forEach((g) => { html += g.items.length > 1 ? groupHTML(g, nightByWake) : entryCardHTML(g.items[0], nightByWake); });
   });
   if (list.length > S.hist.limit) html += `<button type="button" class="btn ghost more-btn" data-more>Show ${Math.min(60, list.length - S.hist.limit)} more</button>`;
@@ -2862,6 +3004,7 @@ function renderHistory() {
   box.innerHTML = html;
   box.onclick = (ev) => {
     const sd = ev.target.closest('[data-sick-day]'); if (sd) { openSickDay(sd.dataset.sickDay); return; }
+    const at = ev.target.closest('[data-att]'); if (at) { const [d, pl] = at.dataset.att.split('|'); openAttendSheet(d, pl); return; }
     const bd = ev.target.closest('[data-bd-day]'); if (bd) { openDayBreakdown(bd.dataset.bdDay); return; }
     if (ev.target.closest('[data-more]')) { S.hist.limit += 60; renderHistory(); return; }
     if (ev.target.closest('[data-earlier]')) { S.hist.days = S.hist.days <= 1 ? 10 : S.hist.days + 7; renderHistory(); return; }
@@ -3270,7 +3413,7 @@ function renderInsights() {
   const all = live();
   const list = S.insightRange === 'all' ? all : rangeFilter(all, addDays(today(), -(+S.insightRange - 1)), today());
   const box = $('#insights');
-  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + activityInsightHTML() + screenInsightHTML() + momentsInsightHTML() + tallyInsightHTML() + routineInsightHTML() + medsInsightHTML() + unwellInsightHTML() + dayFeelCardHTML(all) + growthCardHTML(all) + labCardHTML(all);
+  const labs = suppCheckCardHTML(list) + sleepCardHTML(all) + activityInsightHTML() + screenInsightHTML() + momentsInsightHTML() + tallyInsightHTML() + routineInsightHTML() + medsInsightHTML() + unwellInsightHTML() + attendInsightHTML() + dayFeelCardHTML(all) + growthCardHTML(all) + labCardHTML(all);
   box.onclick = (ev) => {
     const cd = ev.target.closest('[data-check-day]'); if (cd) { openDayCheck(cd.dataset.checkDay); return; }
     const sh = ev.target.closest('[data-night]');
@@ -3883,13 +4026,13 @@ async function openSettings() {
         <option value="5-13"${S.profile.sleepGuide === '5-13' ? ' selected' : ''}>Ages 5–13: 9–11 hours a night</option>
         <option value="off"${S.profile.sleepGuide === 'off' ? ' selected' : ''}>Don't show a guideline</option>
       </select><p class="hint">From Australia's 24-Hour Movement Guidelines. Shown as a band on the sleep chart. The 3–5 guideline includes naps.</p></div>
-      <div class="field"><span class="label">What I track</span>
+      <div class="field" data-sgrp="track"><span class="label">What I track</span>
         <p class="hint">Only changes what this phone shows. Nothing is deleted and your partner's phone is unaffected.</p>
         <div class="track-list">${TRACK_CARDS.map(([k, l]) => `<label class="check"><input type="checkbox" data-trackcard="${k}"${cardHidden(k) ? '' : ' checked'}> ${esc(l)}</label>`).join('')}
-        <label class="check"><input type="checkbox" data-trackopen="1"${S.track.openCards ? ' checked' : ''}> Keep the cards on the Log tab open</label></div>
+        <label class="check"><input type="checkbox" data-trackopen="1"${S.track.openCards ? ' checked' : ''}> Keep the cards open when shown</label></div>
         <span class="label mt10">Log form areas</span><div class="track-list">${CATS.map((c) => `<label class="check"><input type="checkbox" data-trackcat="${c.k}"${S.track.hideCats.includes(c.k) ? '' : ' checked'}> ${c.em} ${esc(c.label)}</label>`).join('')}</div></div>
-      <div class="field"><span class="label">Routine, plan and appointments</span><div class="btn-stack"><button type="button" class="btn ghost" data-act="open-routines">Bedtime routines</button><button type="button" class="btn ghost" data-act="open-appts">Appointments</button></div></div>
-      <div class="field"><label class="label" for="st-outlook">Today's outlook on the Log tab</label><select class="select" id="st-outlook">
+      <div class="field" data-sgrp="routines"><span class="label">Routine, plan and appointments</span><div class="btn-stack"><button type="button" class="btn ghost" data-act="open-routines">Bedtime routines</button><button type="button" class="btn ghost" data-act="open-appts">Appointments</button></div></div>
+      <div class="field" data-sgrp="track"><label class="label" for="st-outlook">Today's outlook (Worth knowing)</label><select class="select" id="st-outlook">
         <option value="on"${S.outlook && S.outlook.off ? '' : ' selected'}>Show it when something stands out</option>
         <option value="off"${S.outlook && S.outlook.off ? ' selected' : ''}>Don't show it</option>
       </select><p class="hint">A short heads-up (like a short night's sleep) with its reasons. Only on this phone.</p></div>
@@ -3919,7 +4062,7 @@ async function openSettings() {
     </div>
     ${peopleSectionHTML()}
     <div class="set-section"><h3>Medicines and supplements</h3><p class="hint intro">A daily plan with one-tap Taken, Late and Missed, shared with everyone using this log.</p><div class="btn-stack"><button type="button" class="btn dark" data-act="med-manage">${Object.keys(medPlans()).length ? 'Manage medicines' : 'Add a medicine'}</button></div></div>
-    <div class="set-section"><h3>Food and lunch box</h3><div class="btn-stack"><button type="button" class="btn ghost" data-act="food-set">Food logging: ${esc({ off: 'Off', simple: 'Simple', detailed: 'Detailed' }[foodCfg().mode])}</button><button type="button" class="btn ghost" data-act="school-set">School days and lunch box${schoolCfg().on ? '' : ' (off)'}</button></div></div>
+    <div class="set-section"><h3>Food, school and care</h3><div class="btn-stack"><button type="button" class="btn ghost" data-act="food-set">Food logging: ${esc({ off: 'Off', simple: 'Simple', detailed: 'Detailed' }[foodCfg().mode])}</button><button type="button" class="btn ghost" data-act="school-set">School, care and lunch box${schoolCfg().on ? '' : ' (off)'}</button></div></div>
     <div class="set-section"><h3>Feedback</h3><p class="hint intro">Tell us what works and what doesn't. ${S.sync ? 'Feedback from your phones is kept together here.' : ''}</p><div class="btn-stack"><button type="button" class="btn dark" data-act="fb-open">Send feedback</button>${S.sync ? `<button type="button" class="btn ghost" data-act="fb-list">See feedback (${feedbackEntries().length})</button>` : ''}</div></div>
     ${S.sync ? familySectionHTML() : ''}
     <div class="set-section">
@@ -4972,7 +5115,8 @@ async function init() {
 
   registerSW();
   setupFolds();
-  watchIcons(document.body);
+  applyDisplay();
+  if (displayCfg().icons !== 'emoji') watchIcons(document.body);
   document.addEventListener('click', (ev) => { if (ev.target.closest('[data-act="updates"]')) openUpdates(); else if (ev.target.closest('[data-act="food-set"]')) openFoodSettings(); else if (ev.target.closest('[data-act="school-set"]')) openSchoolSettings(); });
   pruneLunchPhotos();
   setTimeout(() => { whatsNewNote(); }, 1500);

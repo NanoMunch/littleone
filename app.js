@@ -14,7 +14,7 @@ import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.32.0';
+export const APP_VERSION = '1.33.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -654,7 +654,7 @@ function breakdownHTML(date) {
 export function renderBreakdownCard() {
   const box = $('#breakdown-card'); if (!box) return;
   const rows = dayBreakdown(allEntries(), today(), dayExtras(today()));
-  box.innerHTML = foldCard('breakdown', 'Day breakdown', rows.length ? `${rows.length} so far` : 'Builds as you log', breakdownHTML(today()), true, 'act-card');
+  box.innerHTML = foldCard('breakdown', 'Day breakdown', rows.length ? `${rows.length} so far` : 'Builds as you log', breakdownHTML(today()), false, 'act-card');
 }
 function openDayBreakdown(date) { openSheet(date === today() ? 'Today' : fmtDayLong(date), breakdownHTML(date)); }
 
@@ -994,7 +994,7 @@ function tileDefs() {
     sleep: { label: 'Slept', em: '🌙', cat: 'sleep' },
     played: { label: 'Played', em: '🏃', card: 'activity-card', parent: true },
     with: { label: 'With someone', em: '👥', card: 'with-card' },
-    meds: { label: 'Medicines and supplements', short: 'Medicines and supplements', em: '💊', card: 'meds-card', parent: true },
+    meds: { label: 'Medicines and supplements', short: 'Meds and supps', em: '💊', card: 'meds-card', parent: true },
     mood: { label: 'Mood', em: '🙂', card: 'dayfeel-card', parent: true },
     unwell: { label: 'Unwell', em: '🤒', fn: 'unwell' },
     temp: { label: 'Temperature', em: '🌡', fn: 'temp', parent: true },
@@ -1057,7 +1057,7 @@ function openTile(k) {
   $('#tile-slot').appendChild(el); S.sheetCard = t.card; $('#now-sec').hidden = !$('#now').children.length;
 }
 function openLogFor(cat) {
-  closeSheet(); S.fromTile = true; switchTab('log');
+  closeSheet(); S.fromTile = true; switchTab('log'); $('#log-form').classList.add('from-tile');
   const b = $(`#log-form .cat-btn[data-cat="${cat}"]`);
   if (b && b.getAttribute('aria-pressed') !== 'true') b.click();
 }
@@ -1748,11 +1748,9 @@ function renderOutlookInner() {
   const all = live();
   const o = outlook(all, sleepNights(all), dayRatings(dayfeelEntries()), today(), new Date().getHours(), dayTagMap(tagSource()), { missed: medDoses().filter((d) => d.date === today() && d.status === 'missed').length, late: medDoses().filter((d) => d.date === today() && d.status === 'late').length }, { eatLevel: eatLevel(Array.from(S.entries.values()), today()), notes: withNotes(Array.from(S.entries.values()), today(), (d, n) => addDays(d, -n), (dayRatings(dayfeelEntries()).get(addDays(today(), -1)) || 0) >= 2.5) });
   if (!o) { box.innerHTML = ''; return; }
-  box.innerHTML = `<div class="card outlook ${o.level}" role="region" aria-label="Today's outlook">
-    <h3 class="card-title">${o.level === 'harder' ? 'Today may be a bit harder' : 'Worth knowing today'}</h3>
-    <ul class="outlook-list">${o.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
+  box.innerHTML = foldCard('outlook', o.level === 'harder' ? 'Today may be a bit harder' : 'Worth knowing today', o.reasons[0] || '', `    <ul class="outlook-list">${o.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
     ${o.tips.length ? `<p class="outlook-tip"><b>Might help:</b> ${esc(o.tips[0])}</p>${o.tips.length > 1 ? `<details class="outlook-more"><summary>More ideas</summary><p class="outlook-tip">${o.tips.slice(1).map(esc).join(' ')}</p></details>` : ''}` : ''}
-    <p class="hint outlook-foot">Based only on what's been logged, so it can miss things. It isn't a prediction. <button type="button" class="link-btn" data-act="outlook-hide">Hide for today</button> · <button type="button" class="link-btn" data-act="outlook-off">Turn off</button></p></div>`;
+    <p class="hint outlook-foot">Based only on what's been logged, so it can miss things. It isn't a prediction. <button type="button" class="link-btn" data-act="outlook-hide">Hide for today</button> · <button type="button" class="link-btn" data-act="outlook-off">Turn off</button></p>`, false, `outlook ${o.level}`);
   box.onclick = async (ev) => {
     const a = ev.target.closest('[data-act]'); if (!a) return;
     if (a.dataset.act === 'outlook-hide') S.outlook = { ...(S.outlook || {}), hideDay: today() };
@@ -1939,7 +1937,7 @@ function formHTML(st, e, mode) {
     <label class="label" for="${uid}-tod">Time of day</label><select class="select" id="${uid}-tod" data-f="tod">${TODS.map((t) => `<option value="${t.k}">${t.em} ${t.k}</option>`).join('')}</select>
     <p class="hint">No exact time? Choose roughly when it happened, or add the time above.</p>
   </div>
-  <div class="field">
+  <div class="field cat-field">
     <span class="label" id="${uid}-catl">Area</span>
     <div class="cat-grid" role="group" aria-labelledby="${uid}-catl">${CATS.filter((c) => mode === 'edit' || st.cat === c.k || !S.track.hideCats.includes(c.k)).map((c) => `<button type="button" class="cat-btn" data-cat="${c.k}" aria-pressed="${st.cat === c.k}"><span class="em" aria-hidden="true">${c.em}</span>${c.label}</button>`).join('')}</div>
   </div>
@@ -2558,7 +2556,7 @@ async function saveForm(el) {
   } else {
     clearTimeout(draftTimer); await kvDel('draft').catch(() => {});
     mountForm(el, null, 'new');
-    if (S.fromTile) { S.fromTile = false; switchTab('today'); }
+    if (S.fromTile) { S.fromTile = false; $('#log-form').classList.remove('from-tile'); switchTab('today'); }
     window.scrollTo({ top: 0, behavior: 'smooth' });
     toast(`Entry saved${savedWhen(date, e.time)}`, { label: 'View', fn: () => switchTab('history') });
   }
@@ -4965,7 +4963,7 @@ async function init() {
   document.addEventListener('click', (ev) => { if (ev.target.closest('[data-act="updates"]')) openUpdates(); else if (ev.target.closest('[data-act="food-set"]')) openFoodSettings(); else if (ev.target.closest('[data-act="school-set"]')) openSchoolSettings(); });
   pruneLunchPhotos();
   setTimeout(() => { whatsNewNote(); }, 1500);
-  const lb = $('#log-back'); if (lb) lb.onclick = () => { S.fromTile = false; switchTab('today'); };
+  const lb = $('#log-back'); if (lb) lb.onclick = () => { S.fromTile = false; $('#log-form').classList.remove('from-tile'); switchTab('today'); };
   setInterval(() => { try { if (document.visibilityState === 'visible' && $('#app').dataset.screen === 'main' && S.tab === 'today') { renderRoutineCard(); renderApptCard(); renderToday(); } } catch (e) { /* ignore */ } }, 60000);
 
   document.addEventListener('click', (ev) => {

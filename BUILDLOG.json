@@ -1,5 +1,5 @@
 {
-  "version": "1.32.0",
+  "version": "1.33.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -156,6 +156,10 @@
     {
       "date": "2026-11-21",
       "notes": "1.32.0 Food logging setting: Off, Simple or Detailed. Simple lets you tap what was in each meal and shows a rough picture by food group, with iron and calcium as a guide (including iron from supplements). Detailed lets foods hold nutrient amounts per serve and shows daily totals with supplements. No calories. New lunch box planner: set school days, breaks and days off; plan boxes the night before (with where things are, a note for whoever packs, and copying a previous day); tick items off while packing; after school rate how much of each item was eaten and what part was left, with optional photos that stay on the phone and are deleted once rated or after 7 days; ideas and a shopping list from what gets eaten. Older medicine plans with supplement names are now treated as supplements."
+    },
+    {
+      "date": "2026-11-21",
+      "notes": "1.33.0 Cleaner Today screen: Worth knowing and the Day breakdown now fold up (tap to open), with their extra headings removed. Logging from a tile (like a one-off supplement) no longer shows the list of areas, just the form for that thing."
     }
   ]
 }

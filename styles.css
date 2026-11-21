@@ -780,3 +780,5 @@ a.btn { text-decoration: none; }
 .lb-photo { width: 100%; border-radius: 10px; display: block; }
 .lb-add { display: flex; flex-direction: column; gap: 6px; font-size: .85rem; border: 1px dashed var(--line, #e4dccb); border-radius: 10px; padding: 10px; }
 .lb-rate { margin: 8px 0 12px; } .tip-list { padding-left: 18px; } .tip-list li { margin: 4px 0; }
+.from-tile .cat-field { display: none; }
+#breakdown-card .card, #know-sec .card { margin-top: 8px; }

@@ -24,7 +24,7 @@ export function eatLevel(entries, date) {
 }
 export function meals(entries, date) {
   return entries.filter((e) => e && !e.deleted && e.cat === 'eat' && (e.kind === 'meal' || e.kind === 'snack') && e.date === date && PORTIONS[e.portion])
-    .map((e) => ({ id: e.id, kind: e.kind, time: HM.test(e.time || '') ? e.time : '', portion: e.portion, note: cleanText(e.notes, 200), title: cleanText(e.title, 60) }))
+    .map((e) => ({ id: e.id, kind: e.kind, time: HM.test(e.time || '') ? e.time : '', portion: e.portion, note: cleanText(e.notes, 200), title: cleanText(e.title, 60), foods: Array.isArray(e.foods) ? e.foods.map(String).slice(0, 20) : [], serves: +e.serves > 0 ? +e.serves : 0 }))
     .sort((a, b) => (a.time || '99').localeCompare(b.time || '99'));
 }
 // Rows for one day: [{ time, kind, text, id? }] sorted by time. Items without a time go last.

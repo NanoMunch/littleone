@@ -6,6 +6,7 @@ import { WHAT, WHY, REPAIR, CUP, CUP_TAGS, SUPPORT, tipsFor, cupTips, momentSumm
 import { cleanHome, mergeHome, variantFor, stepStatus, routineWeek, occurrences, upcoming, followUps, reminders, apptIcs, carerView, tickId, REPEATS } from './home.js';
 import { DETAILS, DETAIL_NUMS, cleanDetail, cleanNum, hasDetail as hasMoment, detailText, detailTitle, momentCards, tallyStats, tallyNotes } from './moments.js';
 import { watchIcons } from './icons.js';
+import { GROUPS, NUTS, FOODS, cleanFoodCfg, allFoods, daySummary, dayTotals, EATEN, cleanSchool, isSchoolDay, nextSchoolDay, lunchId, cleanLunchItems, itemStats, lunchIdeas, shoppingList, lunchLevel } from './food.js';
 import { REASONS, prnStatus, temps as tempReadings, unwellDays, reasonLabel, spells, sickChart, doseMs, atMs } from './sick.js';
 import { WITH_KINDS, PORTIONS, EAT_LEVELS, cleanWith, eatLevel, meals as mealsOf, breakdown as dayBreakdown, withMins, withTotals, withNotes } from './daylog.js';
 import { EFFECTS, DAY_NAMES, retestInfo, reminderIcs, slotsFor, cleanPlans, mergePlans, activeOn, isPrn, doseId, todayRows, cleanItem, sameNutrient, adherence, changePoints, beforeAfter, missedLink, effectCounts } from './meds.js';
@@ -13,7 +14,7 @@ import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.31.0';
+export const APP_VERSION = '1.32.0';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -310,7 +311,7 @@ function setupFolds() {
     const open = body.hidden; S.fold[k] = open; body.hidden = !open; t.setAttribute('aria-expanded', String(open));
   });
 }
-const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'tally' && e.cat !== 'tick' && e.cat !== 'ask' && e.cat !== 'activity' && e.cat !== 'screen' && e.cat !== 'feedback' && e.cat !== 'meddose' && e.cat !== 'sidefx' && e.cat !== 'with' && e.cat !== 'eat' && e.cat !== 'temp' && e.cat !== 'sickday');
+const live = () => Array.from(S.entries.values()).filter((e) => e && !e.deleted && e.date && e.cat !== 'dayfeel' && e.cat !== 'tally' && e.cat !== 'tick' && e.cat !== 'ask' && e.cat !== 'activity' && e.cat !== 'screen' && e.cat !== 'feedback' && e.cat !== 'meddose' && e.cat !== 'sidefx' && e.cat !== 'with' && e.cat !== 'eat' && e.cat !== 'temp' && e.cat !== 'sickday' && e.cat !== 'lunch');
 
 // ---------------------------------------------------------------- height and weight
 // Height in centimetres and weight in kilograms, as typed ("104.5", "104,5", "17.2 kg"). Returns NaN when
@@ -591,7 +592,7 @@ export function renderEatCard() {
   const sum = [lvl ? EAT_LEVELS[lvl] : '', ms.length ? `${ms.length} meal${ms.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ') || 'How they ate';
   box.innerHTML = foldCard('eat', 'How they ate', sum, `<div class="chips" role="group" aria-label="How they ate today">${Object.entries(EAT_LEVELS).map(([k, l]) => `<button type="button" class="chip" data-eatlvl="${k}" aria-pressed="${lvl === k}">${esc(l)}</button>`).join('')}</div>
     ${ms.map((m) => `<button type="button" class="time-row" data-eatedit="${esc(m.id)}"><span><b>${m.kind === 'snack' ? 'Snack' : 'Meal'}${m.title ? `: ${esc(m.title)}` : ''}</b><small>${esc([m.time ? fmtTime(m.time) : '', PORTIONS[m.portion], m.note].filter(Boolean).join(' · '))}</small></span></button>`).join('')}
-    <div class="chips mt10"><button type="button" class="chip" data-eatadd="meal">Add a meal</button><button type="button" class="chip" data-eatadd="snack">Add a snack</button></div>
+    ${foodCfg().mode !== 'off' ? `${foodSummaryHTML(ms)}<div class="chips mt10"><button type="button" class="chip" data-eatadd="meal">Add a meal</button><button type="button" class="chip" data-eatadd="snack">Add a snack</button></div>` : ''}
     <button type="button" class="chip mt10" data-eatnote="1">Write a longer eating note</button><p class="hint">Only what you log is used. Not logging never reads as not eating.</p>`, false, 'act-card');
   box.onclick = async (ev) => {
     if (ev.target.closest('[data-eatnote]')) { openLogFor('eating'); return; }
@@ -608,6 +609,7 @@ function openMealSheet(cur, kind) {
   const k0 = cur ? cur.kind : (kind === 'snack' ? 'snack' : 'meal'); let portion = cur ? cur.portion : 'most';
   openSheet(cur ? 'Edit meal' : 'Meal or snack', `
     <div class="field"><span class="label">Type</span><div class="chips">${[['meal', 'Meal'], ['snack', 'Snack']].map(([k, l]) => `<button type="button" class="chip" data-mkind="${k}" aria-pressed="${k === k0}">${l}</button>`).join('')}</div></div>
+    ${foodCfg().mode !== 'off' ? `<div class="field"><span class="label">What was in it</span><div class="chips" id="ml-foods">${Object.entries(allFoods(foodCfg())).map(([k, f]) => `<button type="button" class="chip" data-mfood="${esc(k)}" aria-pressed="${!!(cur && (cur.foods || []).includes(k))}">${esc(f.name)}</button>`).join('')}</div>${foodCfg().mode === 'detailed' ? `<div class="row2 mt10"><input class="input" id="ml-serves" type="number" inputmode="decimal" min="0" step="0.5" value="${cur && cur.serves ? cur.serves : ''}" placeholder="Serves (default 1)" aria-label="Serves"></div>` : ''}<p class="hint">Rough picture only. Add your own foods in Settings, Food logging.</p></div>` : ''}
     <div class="field"><label class="label" for="ml-title">What (optional)</label><input class="input" id="ml-title" maxlength="60" autocomplete="off" value="${esc(cur ? cur.title : '')}" placeholder="e.g. Pasta"></div>
     <div class="field"><label class="label" for="ml-time">Time</label><input class="input" id="ml-time" type="time" value="${esc(cur ? cur.time : nowHHMM())}"></div>
     <div class="field"><span class="label">How much was eaten</span><div class="chips">${Object.entries(PORTIONS).map(([k, l]) => `<button type="button" class="chip" data-mport="${k}" aria-pressed="${k === portion}">${l}</button>`).join('')}</div></div>
@@ -615,6 +617,7 @@ function openMealSheet(cur, kind) {
     <div class="actions"><button type="button" class="btn primary" data-act="ml-save">Save</button>${cur ? '<button type="button" class="btn ghost" data-act="ml-del">Delete</button>' : ''}</div>`);
   let kind0 = k0; const b = $('#sheet-body');
   b.onclick = async (ev) => {
+    const mf = ev.target.closest('[data-mfood]'); if (mf) { mf.setAttribute('aria-pressed', String(mf.getAttribute('aria-pressed') !== 'true')); return; }
     const mk = ev.target.closest('[data-mkind]'); const mp = ev.target.closest('[data-mport]'); const a = ev.target.closest('[data-act]');
     if (mk) { kind0 = mk.dataset.mkind; $$('[data-mkind]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === mk))); return; }
     if (mp) { portion = mp.dataset.mport; $$('[data-mport]', b).forEach((x) => x.setAttribute('aria-pressed', String(x === mp))); return; }
@@ -622,7 +625,7 @@ function openMealSheet(cur, kind) {
     if (a.dataset.act === 'ml-del' && cur) { await deleteActivity(cur); closeSheet(); afterDayLog(); return; }
     if (a.dataset.act !== 'ml-save') return;
     const now = Date.now(); const tm = $('#ml-time', b).value || nowHHMM();
-    const e = { ...(cur || { id: Sync.randomId(12), createdAt: now, by: S.myName || '', byDev: S.deviceId, src: 'parent', srcName: S.myName || 'Me', sev: 0, date: today() }), cat: 'eat', updatedAt: now, kind: kind0, portion, title: $('#ml-title', b).value.trim(), notes: $('#ml-note', b).value.trim(), time: tm, tod: todOf(tm) };
+    const e = { ...(cur || { id: Sync.randomId(12), createdAt: now, by: S.myName || '', byDev: S.deviceId, src: 'parent', srcName: S.myName || 'Me', sev: 0, date: today() }), cat: 'eat', updatedAt: now, kind: kind0, portion, foods: $$('[data-mfood][aria-pressed="true"]', b).map((x) => x.dataset.mfood), serves: +(($('#ml-serves', b) || {}).value) || 0, title: $('#ml-title', b).value.trim() || $$('[data-mfood][aria-pressed="true"]', b).map((x) => (allFoods(foodCfg())[x.dataset.mfood] || {}).name).filter(Boolean).join(', ').slice(0, 60), notes: $('#ml-note', b).value.trim(), time: tm, tod: todOf(tm) };
     await saveActivity(e); closeSheet(); afterDayLog();
   };
 }
@@ -635,10 +638,11 @@ function dayExtras(date) {
     if (e.cat === 'meddose' && (e.status === 'taken' || e.status === 'late' || e.status === 'backup')) out.push({ time: e.takenAt || '', kind: 'med', text: `${(plans[e.planId] && plans[e.planId].name) || 'Medicine'} ${e.status === 'late' ? 'given late' : 'given'}${Array.isArray(e.reasons) && e.reasons.length ? ` (${e.reasons.map(reasonLabel).join(', ')})` : ''}` });
     else if (e.cat === 'activity' && ACT_KINDS[e.kind]) out.push({ time: e.time || '', kind: 'act', text: `${ACT_KINDS[e.kind].label}${e.mins ? `, ${minText(e.mins)}` : ''}` });
     else if (e.cat === 'screen' && SCR_KINDS[e.kind]) out.push({ time: e.time || '', kind: 'scr', text: `Screen: ${SCR_KINDS[e.kind].label}${e.mins ? `, ${minText(e.mins)}` : ''}` });
+    else if (e.cat === 'lunch' && cleanLunchItems(e.items).length) { const br = schoolCfg().breaks.find((x) => x.id === e.breakId); const r = cleanLunchItems(e.items).filter((i) => i.eaten !== ''); out.push({ time: '', kind: 'eat', text: `Lunch box${br ? ` (${br.name})` : ''}: ${cleanLunchItems(e.items).map((i) => i.name).join(', ')}${r.length ? `, ${({ low: 'low', usual: 'usual', big: 'big' })[e.level] || ''} eating` : ''}` }); }
     else if (e.cat === 'temp') out.push({ time: e.time || '', kind: 'temp', text: `Temperature ${e.value}°` });
     else if (e.cat === 'sickday' && Array.isArray(e.reasons) && e.reasons.length) out.push({ time: '', kind: 'sick', text: `Unwell: ${e.reasons.map(reasonLabel).join(', ')}` });
     else if (e.cat === 'tick' && e.at && !e.skip && !e.member) out.push({ time: hmFromMs(e.at), kind: 'rt', text: 'Routine step done' });
-    else if (CAT[e.cat] && e.cat !== 'eating' && !['dayfeel', 'tally', 'ask', 'activity', 'screen', 'meddose', 'sidefx', 'with', 'eat', 'feedback', 'temp', 'sickday'].includes(e.cat)) out.push({ time: e.time || '', kind: 'log', text: `${CAT[e.cat].label}${e.title ? `: ${e.title}` : ''}` });
+    else if (CAT[e.cat] && e.cat !== 'eating' && !['dayfeel', 'tally', 'ask', 'activity', 'screen', 'meddose', 'sidefx', 'with', 'eat', 'feedback', 'temp', 'sickday', 'lunch'].includes(e.cat)) out.push({ time: e.time || '', kind: 'log', text: `${CAT[e.cat].label}${e.title ? `: ${e.title}` : ''}` });
   });
   return out;
 }
@@ -659,6 +663,194 @@ S.attn = {};
 function setAttn(k, v) { S.attn[k] = !!v; const d = $('#today-dot'); if (d) d.hidden = !Object.values(S.attn).some(Boolean); }
 async function openPeople() { await openSettings(); setTimeout(() => { const el = $('[data-act="fam-add"]') || $('[data-act="fam-setup"]'); if (el) el.scrollIntoView({ block: 'center' }); }, 50); }
 
+
+
+// ---------------------------------------------------------------- Food settings and the rough food picture
+const foodCfg = () => cleanFoodCfg(S.profile.food);
+const schoolCfg = () => cleanSchool(S.profile.school);
+async function saveFood(c) { S.profile = { ...S.profile, food: cleanFoodCfg({ ...c, updatedAt: Date.now() }), updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(300); }
+async function saveSchool(c) { S.profile = { ...S.profile, school: cleanSchool({ ...c, updatedAt: Date.now() }), updatedAt: Date.now() }; await kvSet('profile', S.profile); scheduleSync(300); }
+const TIER = ['not logged today', 'some', 'good source'];
+function suppToday(nutrient) {
+  return allEntries().filter((e) => e && !e.deleted && e.cat === 'supplement' && e.date === today() && (e.contents || []).some((c) => String(c.name || '').toLowerCase() === nutrient)).map((e) => e.med);
+}
+function foodSummaryHTML(ms) {
+  const cfg = foodCfg(); if (!ms.some((m) => (m.foods || []).length)) return '';
+  if (cfg.mode === 'detailed') {
+    const supp = allEntries().filter((e) => e && !e.deleted && e.cat === 'supplement' && e.date === today()).flatMap((e) => e.contents || []);
+    const tot = dayTotals(ms, cfg, supp);
+    const sm = daySummary(ms, cfg);
+    return `<div class="food-sum"><p><b>Food groups:</b> ${Object.entries(GROUPS).filter(([k]) => k !== 'other').map(([k, l]) => `${esc(l)} ${sm.groups.has(k) ? '✓' : '–'}`).join(' · ')}</p>${tot.length ? `<p class="hint"><b>Totals today</b> (food + supplements): ${esc(tot.map((t) => `${t.name} ${+(t.food + t.supp).toFixed(1)} ${t.unit}${t.supp && t.food ? ` (${+t.food.toFixed(1)} from food)` : ''}`).join(', '))}</p>` : '<p class="hint">Add nutrient amounts to your foods in Settings, Food logging, to see totals.</p>'}</div>`;
+  }
+  const sm = daySummary(ms, cfg);
+  const miss = Object.entries(GROUPS).filter(([k]) => k !== 'other' && !sm.groups.has(k)).map(([, l]) => l);
+  const iron = suppToday('iron');
+  return `<div class="food-sum"><p><b>Food groups:</b> ${Object.entries(GROUPS).filter(([k]) => k !== 'other' && sm.groups.has(k)).map(([, l]) => `${esc(l)} ✓`).join(' · ') || 'none yet'}${miss.length ? ` <small>· not logged: ${esc(miss.join(', ').toLowerCase())}</small>` : ''}</p>
+    <p class="hint">${['iron', 'calcium'].map((k) => `${NUTS[k]}: ${TIER[sm.tiers[k] || 0]}${sm.from[k] ? ` (${esc(sm.from[k].toLowerCase())})` : ''}${k === 'iron' && iron.length ? `, plus ${esc(iron.join(', '))}` : ''}`).join(' · ')}. A rough guide from food groups, not exact amounts.</p></div>`;
+}
+function openFoodSettings() {
+  let cfg = foodCfg();
+  const draw = () => {
+    const mine = Object.entries(cfg.foods).filter(([, f]) => !f.removed);
+    $('#sheet-body').innerHTML = `<div class="field"><span class="label">How much detail</span><div class="chips">${[['off', 'Off'], ['simple', 'Simple'], ['detailed', 'Detailed']].map(([k, l]) => `<button type="button" class="chip" data-fmode="${k}" aria-pressed="${cfg.mode === k}">${l}</button>`).join('')}</div>
+      <p class="hint">${cfg.mode === 'off' ? 'Just the Low, Usual or Big tap for the day.' : cfg.mode === 'simple' ? 'Tap what was in each meal for a rough picture by food group, with iron and calcium as a guide. No numbers or calories.' : 'Foods can hold nutrient amounts per serve, and the day shows totals with supplements included. No calories.'}</p></div>
+      ${cfg.mode !== 'off' ? `<h4 class="feel-sub">My foods</h4>${mine.length ? mine.map(([id, f]) => `<div class="kv"><span><b>${esc(f.name)}</b><small>${esc(GROUPS[f.group])}${f.per.length ? ` · ${esc(f.per.map((x) => `${x.name} ${x.amount}`).join(', '))}` : ''}</small></span><button type="button" class="chip" data-fdel="${id}">Remove</button></div>`).join('') : '<p class="hint">The common foods are built in. Add your own, like a favourite cereal.</p>'}
+      <div class="field mt10"><input class="input" id="fd-name" maxlength="40" placeholder="Food name, e.g. Weet-Bix" autocomplete="off">
+      <div class="chips mt10">${Object.entries(GROUPS).map(([k, l]) => `<button type="button" class="chip" data-fgrp="${k}" aria-pressed="false">${l}</button>`).join('')}</div>
+      ${cfg.mode === 'detailed' ? '<input class="input mt10" id="fd-per" maxlength="200" placeholder="Per serve, e.g. Iron 2.8 mg, Calcium 30 mg" autocomplete="off"><p class="hint">From the packet\'s nutrition panel.</p>' : `<div class="chips mt10">${['iron', 'calcium'].map((k) => `<button type="button" class="chip" data-ftier="${k}" aria-pressed="false">Good source of ${NUTS[k].toLowerCase()}</button>`).join('')}</div>`}
+      <button type="button" class="btn dark block mt10" data-act="fd-add">Add food</button></div>` : ''}`;
+  };
+  openSheet('Food logging', ''); draw();
+  let grp = 'other'; const tiers = {};
+  $('#sheet-body').onclick = async (ev) => {
+    const b = ev.target.closest('button'); if (!b) return; const ds = b.dataset;
+    if (ds.fmode) { cfg = { ...cfg, mode: ds.fmode }; await saveFood(cfg); draw(); renderEatCard(); }
+    else if (ds.fgrp) { grp = ds.fgrp; $$('[data-fgrp]').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); }
+    else if (ds.ftier) { tiers[ds.ftier] = tiers[ds.ftier] ? 0 : 2; b.setAttribute('aria-pressed', String(!!tiers[ds.ftier])); }
+    else if (ds.fdel) { cfg.foods[ds.fdel] = { ...cfg.foods[ds.fdel], removed: true }; await saveFood(cfg); draw(); }
+    else if (ds.act === 'fd-add') {
+      const name = $('#fd-name').value.trim(); if (!name) { toast('Add the food name'); return; }
+      const per = ($('#fd-per') ? $('#fd-per').value : '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => { const m = x.match(/^(.*?)\s+([\d.]+\s*[a-zµμ]*)$/i); return m ? { name: m[1], amount: m[2] } : null; }).filter(Boolean);
+      const id = `f${Sync.randomId(8).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10)}`;
+      cfg.foods[id] = { name, group: grp, t: { ...tiers }, per }; await saveFood(cfg); cfg = foodCfg(); grp = 'other'; Object.keys(tiers).forEach((k) => delete tiers[k]); draw(); toast(`${name} added`);
+    }
+  };
+}
+// ---------------------------------------------------------------- School and lunch box
+const DAYN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+function openSchoolSettings() {
+  let sc = schoolCfg();
+  const draw = () => {
+    $('#sheet-body').innerHTML = `<label class="check"><input type="checkbox" id="sc-on"${sc.on ? ' checked' : ''}> Use the lunch box planner</label>
+      <div class="field"><span class="label">School days</span><div class="chips">${[1, 2, 3, 4, 5, 6, 0].map((d) => `<button type="button" class="chip" data-scday="${d}" aria-pressed="${sc.days.includes(d)}">${DAYN[d]}</button>`).join('')}</div></div>
+      <div class="field"><span class="label">Breaks with food</span>${sc.breaks.map((br, i) => `<div class="row2 mt10"><input class="input" data-brname="${i}" maxlength="30" value="${esc(br.name)}" aria-label="Break name"><button type="button" class="chip" data-brdel="${i}">Remove</button></div>`).join('')}
+        ${sc.breaks.length < 4 ? '<button type="button" class="chip mt10" data-act="br-add">Add a break</button>' : ''}<p class="hint">Rename them to match your school, e.g. Crunch and sip, Recess.</p></div>
+      <div class="field"><span class="label">Days off and holidays</span>${sc.off.filter((o) => o.to >= today()).map((o) => `<div class="kv"><span>${esc(o.label || 'Day off')} <small>${esc(fmtDayLong(o.from))}${o.to !== o.from ? ` to ${esc(fmtDayLong(o.to))}` : ''}</small></span><button type="button" class="chip" data-offdel="${esc(o.from)}">Remove</button></div>`).join('') || '<p class="hint">None coming up.</p>'}
+        <div class="row2 three mt10"><input class="input" type="date" id="off-from" aria-label="From"><input class="input" type="date" id="off-to" aria-label="To (optional)"><input class="input" id="off-l" maxlength="30" placeholder="e.g. Term break" aria-label="Label"></div>
+        <button type="button" class="chip mt10" data-act="off-add">Add days off</button></div>
+      <button type="button" class="btn primary block" data-act="sc-save">Save</button>`;
+  };
+  openSheet('School and lunch box', ''); draw();
+  const b = $('#sheet-body');
+  const grab = () => { sc.on = $('#sc-on', b).checked; $$('[data-brname]', b).forEach((x) => { const i = +x.dataset.brname; if (sc.breaks[i]) sc.breaks[i].name = x.value.trim() || sc.breaks[i].name; }); };
+  b.onclick = async (ev) => {
+    const x = ev.target.closest('button'); if (!x) return; const ds = x.dataset; grab();
+    if (ds.scday) { const d = +ds.scday; sc.days = sc.days.includes(d) ? sc.days.filter((y) => y !== d) : [...sc.days, d]; draw(); }
+    else if (ds.brdel) { sc.breaks.splice(+ds.brdel, 1); draw(); }
+    else if (ds.act === 'br-add') { const used = new Set(sc.breaks.map((y) => y.id)); const id = ['at', 'b4', 'b5', 'b6', 'mt', 'lu'].find((y) => !used.has(y)); sc.breaks.push({ id, name: sc.breaks.length === 2 ? 'Afternoon tea' : 'Snack' }); draw(); }
+    else if (ds.offdel) { sc.off = sc.off.filter((o) => o.from !== ds.offdel); draw(); }
+    else if (ds.act === 'off-add') { const f = $('#off-from', b).value; if (!f) { toast('Choose a start date'); return; } sc.off.push({ from: f, to: $('#off-to', b).value || f, label: $('#off-l', b).value.trim() }); draw(); }
+    else if (ds.act === 'sc-save') { await saveSchool(sc); closeSheet(); renderLunchCard(); renderToday(); toast('Saved'); }
+  };
+}
+const lunchEntry = (date, br) => { const e = S.entries.get(lunchId(date, br)); return e && !e.deleted ? e : null; };
+function lunchItemsKnown() {
+  const m = new Map(); allEntries().forEach((e) => { if (e && !e.deleted && e.cat === 'lunch') cleanLunchItems(e.items).forEach((i) => { const k = i.name.toLowerCase(); if (!m.has(k) || i.where) m.set(k, { name: i.name, where: i.where || (m.get(k) || {}).where || '' }); }); });
+  return Array.from(m.values()).slice(0, 30);
+}
+async function saveLunch(date, br, patch) {
+  const id = lunchId(date, br); const cur = S.entries.get(id); const now = Date.now();
+  await saveActivity({ ...(cur && !cur.deleted ? cur : { id, createdAt: now, cat: 'lunch', date, breakId: br, title: '', sev: 0, src: 'parent', time: '' }), ...patch, deleted: false, updatedAt: now, by: S.myName || '', byDev: S.deviceId, srcName: S.myName || 'Me' });
+}
+const lunchPhotoKey = (date, when) => `lbph:${date}:${when}`;
+async function resizePhoto(file) {
+  const url = URL.createObjectURL(file);
+  try { const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const sc = Math.min(1, 640 / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', 0.6);
+  } finally { URL.revokeObjectURL(url); }
+}
+async function setLunchPhoto(date, when, file) {
+  const data = await resizePhoto(file); await kvSet(lunchPhotoKey(date, when), data);
+  const idx = (await kvGet('lbphotos').catch(() => null)) || {}; idx[lunchPhotoKey(date, when)] = date; await kvSet('lbphotos', idx);
+}
+async function dropLunchPhotos(date) { const idx = (await kvGet('lbphotos').catch(() => null)) || {}; for (const k of Object.keys(idx)) if (idx[k] === date) { await kvDel(k).catch(() => {}); delete idx[k]; } await kvSet('lbphotos', idx); }
+async function pruneLunchPhotos() { const idx = (await kvGet('lbphotos').catch(() => null)) || {}; const cut = addDays(today(), -7); for (const k of Object.keys(idx)) if (idx[k] < cut) { await kvDel(k).catch(() => {}); delete idx[k]; } await kvSet('lbphotos', idx).catch(() => {}); }
+function lunchWhen() {
+  const sc = schoolCfg(); if (!sc.on) return null; const hr = new Date().getHours(); const t = today();
+  const tom = nextSchoolDay(sc, t, addDays);
+  const unrated = isSchoolDay(sc, t) && sc.breaks.some((br) => { const e = lunchEntry(t, br.id); return e && cleanLunchItems(e.items).length && !e.rated; });
+  return { sc, t, tom, pack: hr >= 15 && tom === addDays(t, 1), rate: hr >= 15 && unrated };
+}
+export function renderLunchCard() {
+  const box = $('#lunch-card'); if (!box) return;
+  const w = lunchWhen(); if (!w || isHelper()) { box.innerHTML = ''; S.lunchNow = false; return; }
+  const sec = (date, label) => `<h4 class="feel-sub">${esc(label)}</h4>${w.sc.breaks.map((br) => { const e = lunchEntry(date, br.id); const items = e ? cleanLunchItems(e.items) : [];
+    return `<div class="lb-break"><b>${esc(br.name)}</b>${items.length ? `<ul class="lb-items">${items.map((i, ix) => `<li><button type="button" class="lb-tick" data-lbtick="${date}|${br.id}|${ix}" aria-pressed="${i.done}" aria-label="Packed ${esc(i.name)}"></button><span>${esc(i.name)}${i.where ? `<small>${esc(i.where)}</small>` : ''}${i.eaten !== '' ? `<small>${esc(EATEN[i.eaten])}${i.part ? `, ${esc(i.part)}` : ''}</small>` : ''}</span></li>`).join('')}</ul>${e.note ? `<p class="hint">${esc(e.note)}</p>` : ''}${e.listBy && e.listBy !== S.myName ? `<p class="hint">List from ${esc(e.listBy)}</p>` : ''}` : '<p class="hint">Nothing planned yet.</p>'}</div>`; }).join('')}`;
+  const showT = isSchoolDay(w.sc, w.t);
+  const sum = w.rate ? 'How did it go?' : w.pack ? 'Pack for tomorrow' : w.tom ? `Next: ${fmtDayLong(w.tom)}` : 'No school days coming up';
+  box.innerHTML = foldCard('lunch', 'Lunch box', sum, `${w.tom ? sec(w.tom, `${w.tom === addDays(w.t, 1) ? 'Tomorrow' : fmtDayLong(w.tom)}`) : ''}
+    <div class="chips mt10">${w.tom ? `<button type="button" class="chip" data-lb="plan|${w.tom}">Plan ${w.tom === addDays(w.t, 1) ? "tomorrow's" : 'the next'} box</button>` : ''}${showT ? `<button type="button" class="chip" data-lb="rate|${w.t}">How today's box went</button>` : ''}<button type="button" class="chip" data-lb="other|">Another day</button><button type="button" class="chip" data-lb="tips|">Ideas and shopping list</button></div>
+    ${showT ? sec(w.t, 'Today') : ''}`, w.pack || w.rate, 'act-card', w.rate ? { label: 'Rate', attr: `data-lb="rate|${w.t}"` } : w.pack ? { label: 'Plan', attr: `data-lb="plan|${w.tom}"` } : null);
+  S.lunchNow = w.pack || w.rate;
+  setAttn('lunch', w.rate);
+  box.onclick = async (ev) => {
+    const tk = ev.target.closest('[data-lbtick]');
+    if (tk) { const [d, br, ix] = tk.dataset.lbtick.split('|'); const e = lunchEntry(d, br); if (!e) return; const items = cleanLunchItems(e.items); items[+ix].done = !items[+ix].done; await saveLunch(d, br, { items }); renderLunchCard(); return; }
+    const b = ev.target.closest('[data-lb]'); if (!b) return; const [k, d] = b.dataset.lb.split('|');
+    if (k === 'plan') openPackSheet(d); else if (k === 'rate') openRateSheet(d); else if (k === 'tips') openLunchTips();
+    else if (k === 'other') openSheet('Which day?', `<input class="input" type="date" id="lb-day" value="${esc(addDays(today(), 1))}"><div class="actions mt10"><button type="button" class="btn primary" data-act="lb-pl">Plan</button><button type="button" class="btn ghost" data-act="lb-rt">Rate</button></div>`, { onMount: (sb) => { sb.onclick = (e2) => { const a = e2.target.closest('[data-act]'); if (!a) return; const dd = $('#lb-day', sb).value; if (!dd) return; if (a.dataset.act === 'lb-pl') openPackSheet(dd); else openRateSheet(dd); }; } });
+  };
+}
+async function photoImg(date, when) { const d = await kvGet(lunchPhotoKey(date, when)).catch(() => null); return d ? `<img class="lb-photo" src="${d}" alt="${when === 'am' ? 'Packed' : 'Came home'} lunch box">` : ''; }
+async function openPackSheet(date) {
+  const sc = schoolCfg(); const known = lunchItemsKnown(); const lists = {}; const notes = {};
+  sc.breaks.forEach((br) => { const e = lunchEntry(date, br.id); lists[br.id] = e ? cleanLunchItems(e.items) : []; notes[br.id] = e ? e.note || '' : ''; });
+  const prev = allEntries().filter((e) => e && !e.deleted && e.cat === 'lunch' && e.date < date && cleanLunchItems(e.items).length).sort((a, b) => b.date.localeCompare(a.date))[0];
+  const am = await photoImg(date, 'am');
+  const draw = () => {
+    $('#sheet-body').innerHTML = `${prev ? `<button type="button" class="chip" data-act="lb-copy">Copy ${esc(fmtDayLong(prev.date))}'s box</button>` : ''}
+      ${sc.breaks.map((br) => `<div class="lb-break"><h4 class="feel-sub">${esc(br.name)}</h4>${lists[br.id].map((i, ix) => `<div class="kv"><span>${esc(i.name)}${i.where ? `<small>${esc(i.where)}</small>` : ''}</span><button type="button" class="chip" data-lbdel="${br.id}|${ix}">Remove</button></div>`).join('')}
+        <div class="row2 mt10"><input class="input" data-lbname="${br.id}" maxlength="50" placeholder="Add an item" autocomplete="off" list="lb-known"><input class="input" data-lbwhere="${br.id}" maxlength="80" placeholder="Where it is (optional)" autocomplete="off"></div>
+        <button type="button" class="chip mt10" data-lbadd="${br.id}">Add</button>
+        <input class="input mt10" data-lbnote="${br.id}" maxlength="120" placeholder="Note for whoever packs (optional)" value="${esc(notes[br.id])}"></div>`).join('')}
+      <datalist id="lb-known">${known.map((k) => `<option value="${esc(k.name)}">`).join('')}</datalist>
+      ${known.length ? `<div class="chips mt10">${known.slice(0, 12).map((k, i) => `<button type="button" class="chip" data-lbq="${i}">+ ${esc(k.name)}</button>`).join('')}</div><p class="hint">Quick add goes to ${esc(sc.breaks[sc.breaks.length > 1 ? 1 : 0].name)}.</p>` : ''}
+      <div class="field mt10"><span class="label">Packed photo (optional, stays on this phone)</span>${am}<input type="file" accept="image/*" capture="environment" id="lb-am"></div>
+      <button type="button" class="btn primary block" data-act="lb-save">Save</button>`;
+  };
+  openSheet(`Lunch box, ${fmtDayLong(date)}`, ''); draw();
+  const b = $('#sheet-body');
+  const keepNotes = () => $$('[data-lbnote]', b).forEach((x) => { notes[x.dataset.lbnote] = x.value; });
+  b.onchange = async (ev) => { if (ev.target.id === 'lb-am' && ev.target.files[0]) { await setLunchPhoto(date, 'am', ev.target.files[0]); toast('Photo saved on this phone'); } };
+  b.onclick = async (ev) => {
+    const x = ev.target.closest('button'); if (!x) return; const ds = x.dataset; keepNotes();
+    if (ds.lbadd) { const n = $(`[data-lbname="${ds.lbadd}"]`, b).value.trim(); if (!n) return; const kn = known.find((k) => k.name.toLowerCase() === n.toLowerCase()); lists[ds.lbadd].push({ name: n, where: $(`[data-lbwhere="${ds.lbadd}"]`, b).value.trim() || (kn ? kn.where : ''), eaten: '', part: '', done: false }); draw(); }
+    else if (ds.lbq) { const k = known[+ds.lbq]; const br = sc.breaks[sc.breaks.length > 1 ? 1 : 0].id; lists[br].push({ name: k.name, where: k.where, eaten: '', part: '', done: false }); draw(); }
+    else if (ds.lbdel) { const [br, ix] = ds.lbdel.split('|'); lists[br].splice(+ix, 1); draw(); }
+    else if (ds.act === 'lb-copy' && prev) { sc.breaks.forEach((br) => { const e = lunchEntry(prev.date, br.id); if (e) lists[br.id] = cleanLunchItems(e.items).map((i) => ({ ...i, eaten: '', part: '', done: false })); }); draw(); }
+    else if (ds.act === 'lb-save') { for (const br of sc.breaks) if (lists[br.id].length || lunchEntry(date, br.id)) await saveLunch(date, br.id, { items: lists[br.id], note: notes[br.id].trim(), listBy: S.myName || '' }); closeSheet(); renderLunchCard(); renderToday(); toast('Lunch box saved'); }
+  };
+}
+async function openRateSheet(date) {
+  const sc = schoolCfg(); const lists = {}; sc.breaks.forEach((br) => { const e = lunchEntry(date, br.id); lists[br.id] = e ? cleanLunchItems(e.items) : []; });
+  if (!Object.values(lists).some((l) => l.length)) { openPackSheet(date); toast('Add what was packed first'); return; }
+  const am = await photoImg(date, 'am'); const pm = await photoImg(date, 'pm');
+  const draw = () => {
+    $('#sheet-body').innerHTML = `<div class="lb-photos">${am || '<p class="hint">No packed photo</p>'}${pm || '<label class="lb-add">Came home photo<input type="file" accept="image/*" capture="environment" id="lb-pm"></label>'}</div>
+      ${sc.breaks.filter((br) => lists[br.id].length).map((br) => `<h4 class="feel-sub">${esc(br.name)}</h4>${lists[br.id].map((i, ix) => `<div class="lb-rate"><b>${esc(i.name)}</b><div class="chips">${Object.entries(EATEN).map(([k, l]) => `<button type="button" class="chip" data-lbe="${br.id}|${ix}|${k}" aria-pressed="${i.eaten === k}">${l}</button>`).join('')}</div><input class="input mt10" data-lbpart="${br.id}|${ix}" maxlength="80" placeholder="Part eaten or left, e.g. ate the bread, left the filling" value="${esc(i.part)}"></div>`).join('')}`).join('')}
+      <p class="hint">Photos are deleted once you save.</p><button type="button" class="btn primary block" data-act="lb-rsave">Save</button>`;
+  };
+  openSheet(`How the lunch box went, ${fmtDayLong(date)}`, ''); draw();
+  const b = $('#sheet-body');
+  const keep = () => $$('[data-lbpart]', b).forEach((x) => { const [br, ix] = x.dataset.lbpart.split('|'); lists[br][+ix].part = x.value.trim(); });
+  b.onchange = async (ev) => { if (ev.target.id === 'lb-pm' && ev.target.files[0]) { keep(); await setLunchPhoto(date, 'pm', ev.target.files[0]); openRateSheet(date); } };
+  b.onclick = async (ev) => {
+    const x = ev.target.closest('button'); if (!x) return; keep();
+    if (x.dataset.lbe) { const [br, ix, k] = x.dataset.lbe.split('|'); lists[br][+ix].eaten = lists[br][+ix].eaten === k ? '' : k; draw(); return; }
+    if (x.dataset.act !== 'lb-rsave') return;
+    for (const br of sc.breaks) if (lists[br.id].length) await saveLunch(date, br.id, { items: lists[br.id], rated: lists[br.id].some((i) => i.eaten !== ''), level: lunchLevel(lists[br.id]) });
+    await dropLunchPhotos(date); closeSheet(); renderLunchCard(); renderToday(); renderBreakdownCard(); toast('Saved');
+  };
+}
+function openLunchTips() {
+  const st = itemStats(allEntries().filter((e) => e && !e.deleted && e.cat === 'lunch')); const ideas = lunchIdeas(st); const sh = shoppingList(st);
+  const list = (t, a) => (a.length ? `<h4 class="feel-sub">${t}</h4><p>${esc(a.join(', '))}</p>` : '');
+  openSheet('Lunch box ideas', st.length ? `${list('Reliable favourites', sh.favourites)}${list('Eaten once, worth trying again', sh.tryMore)}${list('Often comes back', sh.skip)}
+    ${ideas.length ? `<h4 class="feel-sub">Ideas from your records</h4><ul class="tip-list">${ideas.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>` : ''}
+    <h4 class="feel-sub">Every item</h4>${st.sort((a, b) => b.avg - a.avg).map((x) => `<div class="kv"><span>${esc(x.name)}<small>packed ${x.n} time${x.n === 1 ? '' : 's'}${x.parts.length ? ` · ${esc(x.parts[0])}` : ''}</small></span><span>${x.avg}% eaten</span></div>`).join('')}
+    <button type="button" class="btn ghost block mt10" data-act="lb-copylist">Copy shopping list</button>` : '<p class="hint">Once a few lunch boxes have been rated, this shows what gets eaten, what comes back, and ideas based on your own records.</p>', { onMount: (b) => { b.onclick = async (ev) => { if (!ev.target.closest('[data-act="lb-copylist"]')) return; const t = `Lunch box shopping\nFavourites: ${sh.favourites.join(', ')}\nTry again: ${sh.tryMore.join(', ')}`; try { await navigator.clipboard.writeText(t); toast('Copied'); } catch { toast("Couldn't copy on this phone"); } }; } });
+}
 
 // ---------------------------------------------------------------- Sick days: dose timers, temperatures, reasons
 const DOSE_COLS = ['a', 'b', 'c', 'd'];
@@ -795,7 +987,7 @@ async function whatsNewNote() {
 }
 
 // ---------------------------------------------------------------- Log tiles (each person picks their own, saved on this phone)
-const CARD_RENDER = () => ({ 'timer-card': renderTimerCard, 'meds-card': renderMedsCard, 'routine-card': renderRoutineCard, 'appt-card': renderApptCard, 'ask-card': renderAskCard, 'plan-card': renderPlanCard, 'dayfeel-card': renderDayCard, 'eat-card': renderEatCard, 'with-card': renderWithCard, 'activity-card': renderActivityCard, 'screen-card': renderScreenCard, 'tally-card': renderTallyCard });
+const CARD_RENDER = () => ({ 'timer-card': renderTimerCard, 'meds-card': renderMedsCard, 'routine-card': renderRoutineCard, 'appt-card': renderApptCard, 'ask-card': renderAskCard, 'plan-card': renderPlanCard, 'dayfeel-card': renderDayCard, 'eat-card': renderEatCard, 'with-card': renderWithCard, 'activity-card': renderActivityCard, 'screen-card': renderScreenCard, 'tally-card': renderTallyCard, 'lunch-card': renderLunchCard });
 function tileDefs() {
   const d = {
     ate: { label: 'Ate', em: '🍽', card: 'eat-card', parent: true },
@@ -806,6 +998,7 @@ function tileDefs() {
     mood: { label: 'Mood', em: '🙂', card: 'dayfeel-card', parent: true },
     unwell: { label: 'Unwell', em: '🤒', fn: 'unwell' },
     temp: { label: 'Temperature', em: '🌡', fn: 'temp', parent: true },
+    lunch: { label: 'Lunch box', em: '🎒', card: 'lunch-card', parent: true },
     screen: { label: 'Screen time', em: '📺', card: 'screen-card', parent: true },
     taps: { label: 'Quick taps', em: '😩', card: 'tally-card', parent: true },
     timer: { label: 'Timer', em: '⏱', card: 'timer-card', parent: true },
@@ -901,7 +1094,7 @@ function openTileEditor() {
 
 // Today: Now (only what needs you), Log tiles, the day, worth knowing. Cards not needed right now wait in a hidden store
 // and open in a sheet from their tile, so nothing shows twice.
-const NOW_ORDER = ['timer-card', 'meds-card', 'routine-card', 'appt-card', 'ask-card', 'plan-card'];
+const NOW_ORDER = ['timer-card', 'lunch-card', 'meds-card', 'routine-card', 'appt-card', 'ask-card', 'plan-card'];
 function nowWanted(id) {
   const el = document.getElementById(id); if (!el || !el.innerHTML.trim()) return false;
   if (id === 'timer-card') return !!(S.actRun || S.scrRun || S.careRun);
@@ -909,12 +1102,13 @@ function nowWanted(id) {
   if (id === 'routine-card') return !!(S.attn.routine || S.rtWindow || (isHelper() && el.innerHTML.trim()));
   if (id === 'appt-card') return !!S.attn.appt;
   if (id === 'ask-card') return !!S.attn.ask;
+  if (id === 'lunch-card') return !!S.lunchNow;
   if (id === 'plan-card') return isHelper();
   return false;
 }
 export function renderToday() {
   const panel = $('#tab-today'); if (!panel) return;
-  renderSickStrip();
+  renderSickStrip(); renderLunchCard();
   const now = $('#now'); const store = $('#card-store');
   NOW_ORDER.forEach((id) => { const el = document.getElementById(id); if (!el || S.sheetCard === id) return; if (nowWanted(id)) now.appendChild(el); else if (el.parentNode !== store) store.appendChild(el); });
   $('#now-sec').hidden = !now.children.length;
@@ -1620,7 +1814,7 @@ function toast(msg, action) {
   toastTimer = setTimeout(() => t.classList.remove('show'), action ? 6000 : 2600);
 }
 // A row of jump links at the top of Settings, so each part is one tap away.
-const SET_GROUPS = [['Your child', 'Child'], ['You', 'You'], ['Family and carers', 'People'], ['People', 'People'], ['Medicines', 'Medicines'], ['Sync', 'Sync'], ['Backup file', 'Backup'], ['Feedback', 'Feedback'], ['Privacy', 'Privacy']];
+const SET_GROUPS = [['Food and lunch box', 'Food'], ['Your child', 'Child'], ['You', 'You'], ['Family and carers', 'People'], ['People', 'People'], ['Medicines', 'Medicines'], ['Sync', 'Sync'], ['Backup file', 'Backup'], ['Feedback', 'Feedback'], ['Privacy', 'Privacy']];
 function addSettingsJump(body) {
   const secs = Array.from(body.querySelectorAll('.set-section > h3')); const seen = new Set(); const links = [];
   secs.forEach((h, i) => { const g = SET_GROUPS.find(([t]) => h.textContent.trim().startsWith(t)); if (!g || seen.has(g[1])) return; seen.add(g[1]); h.id = `set-sec-${i}`; links.push([h.id, g[1]]); });
@@ -3450,6 +3644,9 @@ async function mergeRemote(payloads) {
       const mm = mergePlans(S.profile.meds, p.profile.meds);
       if (JSON.stringify(mm) !== JSON.stringify(cleanPlans(S.profile.meds))) { S.profile = { ...S.profile, meds: mm }; await kvSet('profile', S.profile); changed++; }
     }
+    for (const [k, cl] of [['food', cleanFoodCfg], ['school', cleanSchool]]) {
+      if (p.profile && p.profile[k] && !isHelper() && (+p.profile[k].updatedAt || 0) > (+((S.profile[k] || {}).updatedAt) || 0)) { S.profile = { ...S.profile, [k]: cl(p.profile[k]) }; await kvSet('profile', S.profile); changed++; }
+    }
     if (p.profile && p.profile.home && !isHelper()) {
       const mh = mergeHome(S.profile.home, p.profile.home);
       if (JSON.stringify(mh) !== JSON.stringify(cleanHome(S.profile.home))) { S.profile = { ...S.profile, home: mh }; await kvSet('profile', S.profile); changed++; }
@@ -3711,6 +3908,7 @@ async function openSettings() {
     </div>
     ${peopleSectionHTML()}
     <div class="set-section"><h3>Medicines and supplements</h3><p class="hint intro">A daily plan with one-tap Taken, Late and Missed, shared with everyone using this log.</p><div class="btn-stack"><button type="button" class="btn dark" data-act="med-manage">${Object.keys(medPlans()).length ? 'Manage medicines' : 'Add a medicine'}</button></div></div>
+    <div class="set-section"><h3>Food and lunch box</h3><div class="btn-stack"><button type="button" class="btn ghost" data-act="food-set">Food logging: ${esc({ off: 'Off', simple: 'Simple', detailed: 'Detailed' }[foodCfg().mode])}</button><button type="button" class="btn ghost" data-act="school-set">School days and lunch box${schoolCfg().on ? '' : ' (off)'}</button></div></div>
     <div class="set-section"><h3>Feedback</h3><p class="hint intro">Tell us what works and what doesn't. ${S.sync ? 'Feedback from your phones is kept together here.' : ''}</p><div class="btn-stack"><button type="button" class="btn dark" data-act="fb-open">Send feedback</button>${S.sync ? `<button type="button" class="btn ghost" data-act="fb-list">See feedback (${feedbackEntries().length})</button>` : ''}</div></div>
     ${S.sync ? familySectionHTML() : ''}
     <div class="set-section">
@@ -4764,7 +4962,8 @@ async function init() {
   registerSW();
   setupFolds();
   watchIcons(document.body);
-  document.addEventListener('click', (ev) => { if (ev.target.closest('[data-act="updates"]')) openUpdates(); });
+  document.addEventListener('click', (ev) => { if (ev.target.closest('[data-act="updates"]')) openUpdates(); else if (ev.target.closest('[data-act="food-set"]')) openFoodSettings(); else if (ev.target.closest('[data-act="school-set"]')) openSchoolSettings(); });
+  pruneLunchPhotos();
   setTimeout(() => { whatsNewNote(); }, 1500);
   const lb = $('#log-back'); if (lb) lb.onclick = () => { S.fromTile = false; switchTab('today'); };
   setInterval(() => { try { if (document.visibilityState === 'visible' && $('#app').dataset.screen === 'main' && S.tab === 'today') { renderRoutineCard(); renderApptCard(); renderToday(); } } catch (e) { /* ignore */ } }, 60000);

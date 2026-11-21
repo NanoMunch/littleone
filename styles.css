@@ -770,3 +770,13 @@ a.btn { text-decoration: none; }
 .mini-bars .mb { display: flex; align-items: center; gap: 8px; margin: 4px 0; } .mb-bar { height: 8px; border-radius: 4px; background: #9a4a4a; opacity: .6; min-width: 4px; }
 
 .ss-row span { font-size: .8rem; }
+.food-sum p { margin: 8px 0 0; font-size: .88rem; }
+.lb-break { margin: 6px 0 10px; }
+.lb-items { list-style: none; padding: 0; margin: 4px 0; } .lb-items li { display: flex; gap: 10px; align-items: flex-start; padding: 5px 0; }
+.lb-items small { display: block; color: var(--muted); font-size: .78rem; }
+.lb-tick { width: 22px; height: 22px; border-radius: 6px; border: 1.5px solid #8a6d1f; background: none; flex: none; cursor: pointer; padding: 0; }
+.lb-tick[aria-pressed="true"] { background: #8a6d1f; box-shadow: inset 0 0 0 3px var(--card, #fff); }
+.lb-photos { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.lb-photo { width: 100%; border-radius: 10px; display: block; }
+.lb-add { display: flex; flex-direction: column; gap: 6px; font-size: .85rem; border: 1px dashed var(--line, #e4dccb); border-radius: 10px; padding: 10px; }
+.lb-rate { margin: 8px 0 12px; } .tip-list { padding-left: 18px; } .tip-list li { margin: 4px 0; }

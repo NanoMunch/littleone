@@ -1,5 +1,5 @@
 {
-  "version": "1.31.0",
+  "version": "1.32.0",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -152,6 +152,10 @@
     {
       "date": "2026-11-21",
       "notes": "1.31.0 One Medicines and supplements tile that asks Supplements or Medicine. As-needed medicines show time since the last dose and when the next can be given, using the gap and 24-hour limit you copy from the label. On sick days a strip at the top of Today shows dose timers, the last temperature, and a small chart of temperatures and doses with a + to add a reading. Doses and the Unwell tile ask what it is for; unwell days are flagged in History with a sick-day view, and Insights shows how often and what for. Medicines can hold a doctor's dose note, doses left with a running-low warning, and repeats. Settings now has a searchable Updates list, and a note appears after each update."
+    },
+    {
+      "date": "2026-11-21",
+      "notes": "1.32.0 Food logging setting: Off, Simple or Detailed. Simple lets you tap what was in each meal and shows a rough picture by food group, with iron and calcium as a guide (including iron from supplements). Detailed lets foods hold nutrient amounts per serve and shows daily totals with supplements. No calories. New lunch box planner: set school days, breaks and days off; plan boxes the night before (with where things are, a note for whoever packs, and copying a previous day); tick items off while packing; after school rate how much of each item was eaten and what part was left, with optional photos that stay on the phone and are deleted once rated or after 7 days; ideas and a shopping list from what gets eaten. Older medicine plans with supplement names are now treated as supplements."
     }
   ]
 }

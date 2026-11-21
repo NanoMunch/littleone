@@ -1,5 +1,5 @@
 {
-  "version": "1.34.0",
+  "version": "1.34.1",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -176,6 +176,10 @@
     {
       "date": "2026-11-21",
       "notes": "1.34.0 Settings is now a short menu: Your child; You and display; People and carers; Medicines and supplements; Routines and appointments; Food, school and care; What I track; Sync and backup; Feedback; Privacy, version and updates. Each opens its own page with a Back button. New display options per phone: Standard, Large or Extra large text and tiles, and line icons or colourful emoji. School and care: add each place (school, daycare, kinder and so on) with its days, usual times, lunch box breaks and a teacher or office contact. Today shows where they are with a button for Not going (unwell, holiday or trip, appointment, family day, other) or Part of the day (arrived late, picked up early, out for a while). History shows the time at each place, part days and absences; Insights shows days and hours per place and days away by reason. Save and email or text the school with a message already written. The day's eating level is worked out from the meals logged when you haven't tapped one, and it no longer shows in History."
+    },
+    {
+      "date": "2026-11-21",
+      "notes": "1.34.1 The Settings and backup button at the bottom of Today is gone, since Settings is already the cog at the top. People and carers and Share or export a report stay."
     }
   ]
 }

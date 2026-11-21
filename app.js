@@ -14,7 +14,7 @@ import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.34.0';
+export const APP_VERSION = '1.34.1';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -1223,8 +1223,7 @@ export function renderToday() {
   const links = $('#today-links');
   if (links) {
     links.innerHTML = isHelper() ? '' : `<button type="button" class="btn ghost" data-tl="people">People and carers<small>Invite family and choose what carers can see</small></button>
-      <button type="button" class="btn ghost" data-tl="export">Share or export a report<small>A PDF or summary for a clinician, or to keep</small></button>
-      <button type="button" class="btn ghost" data-tl="settings">Settings and backup<small>Child details, what to show, backup and restore</small></button>`;
+      <button type="button" class="btn ghost" data-tl="export">Share or export a report<small>A PDF or summary for a clinician, or to keep</small></button>`;
     links.onclick = (ev) => { const b = ev.target.closest('[data-tl]'); if (!b) return; const k = b.dataset.tl; if (k === 'people') openPeople(); else if (k === 'export') switchTab('export'); else openSettings(); };
   }
 }

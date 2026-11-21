@@ -14,7 +14,7 @@ import { listedFor } from './meds-info.js';
 import { moveTargets, moveTotals, moveNudge, screenCounted, screenNote } from './moves.js';
 import { growthPercentile, valueAtPercentile, ageMonths, pctText, ageText, normCdf } from './growth.js';
 
-export const APP_VERSION = '1.33.1';
+export const APP_VERSION = '1.33.2';
 
 // ---------------------------------------------------------------- constants
 export const CATS = [
@@ -2670,8 +2670,21 @@ async function deleteEntry(id) {
   });
 }
 
+// Ate tile entries and rated lunch boxes, shown in History as Eating.
+function eatAsEntries() {
+  const out = []; const brs = schoolCfg().breaks;
+  for (const e of S.entries.values()) {
+    if (!e || e.deleted || !e.date) continue;
+    if (e.cat === 'eat' && e.kind === 'level' && EAT_LEVELS[e.level]) out.push({ ...e, cat: 'eating', title: `Ate: ${EAT_LEVELS[e.level].toLowerCase()} day`, notes: '', _eat: 1 });
+    else if (e.cat === 'eat' && (e.kind === 'meal' || e.kind === 'snack') && PORTIONS[e.portion]) out.push({ ...e, cat: 'eating', title: `${e.kind === 'snack' ? 'Snack' : 'Meal'}${e.title ? `: ${e.title}` : ''}`, notes: [`${PORTIONS[e.portion]} eaten`, e.notes].filter(Boolean).join('. '), _eat: 1 });
+    else if (e.cat === 'lunch' && e.rated) { const br = brs.find((x) => x.id === e.breakId); const it = cleanLunchItems(e.items); out.push({ ...e, cat: 'eating', time: e.time || '', title: `Lunch box${br ? ` (${br.name})` : ''}`, notes: it.map((i) => `${i.name}: ${(EATEN[i.eaten] || 'not rated').toLowerCase()}${i.part ? ` (${i.part})` : ''}`).join(', '), _eat: 1 }); }
+  }
+  return out;
+}
 function openEntry(id) {
   const e = S.entries.get(id); if (!e || e.deleted) return;
+  if (e.cat === 'eat') { if (e.kind === 'level') { S.fold.eat = true; openTile('ate'); } else openMealSheet(e); return; }
+  if (e.cat === 'lunch') { openRateSheet(e.date); return; }
   openSheet('Edit entry', '<div id="edit-form"></div>', { onMount: (b) => mountForm($('#edit-form', b), e, 'edit') });
 }
 
@@ -2808,7 +2821,7 @@ function entryCardHTML(e, nightByWake, grp) {
 
 function renderHistory() {
   S.uwDays = unwellDays(allE());
-  const all = sortEntries(live());
+  const all = sortEntries([...live(), ...eatAsEntries()]);
   const counts = {}; all.forEach((e) => { counts[e.cat] = (counts[e.cat] || 0) + 1; });
   const fr = $('#filter-row');
   fr.innerHTML = `<button type="button" class="chip" data-filter="all" aria-pressed="${S.hist.cat === 'all'}">All <span class="n">${all.length}</span></button>`

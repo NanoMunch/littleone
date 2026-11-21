@@ -1,5 +1,5 @@
 {
-  "version": "1.33.1",
+  "version": "1.33.2",
   "changelog": [
     {
       "date": "2026-10-17",
@@ -164,6 +164,10 @@
     {
       "date": "2026-11-21",
       "notes": "1.33.1 History opens on the last 48 hours, starting from the beginning of the earliest day shown (so today, yesterday and the day before, in full). Show earlier adds a week at a time. The Medicines and supplements tile label is back to how it was."
+    },
+    {
+      "date": "2026-11-21",
+      "notes": "1.33.2 Everything logged with the Ate tile (the day's Low, Usual or Big, and each meal or snack with how much was eaten) and rated lunch boxes now show in History under Eating. Tap one to edit it."
     }
   ]
 }
